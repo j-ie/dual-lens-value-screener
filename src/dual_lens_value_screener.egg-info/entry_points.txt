@@ -1,0 +1,2 @@
+[console_scripts]
+value-screener = value_screener.cli:main

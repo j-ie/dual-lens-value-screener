@@ -1,0 +1,101 @@
+Metadata-Version: 2.4
+Name: dual-lens-value-screener
+Version: 0.1.0
+Summary: Graham-style and Buffett-style dual-lens stock screening (MVP API)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.109.0
+Requires-Dist: uvicorn[standard]>=0.27.0
+Requires-Dist: pydantic>=2.5.0
+Requires-Dist: sqlalchemy>=2.0.0
+Requires-Dist: pymysql>=1.1.0
+Requires-Dist: redis>=5.0.0
+Requires-Dist: alembic>=1.13.0
+Requires-Dist: python-dotenv>=1.0.0
+Provides-Extra: dev
+Requires-Dist: httpx>=0.26.0; extra == "dev"
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+Provides-Extra: a-share
+Requires-Dist: tushare>=1.4.0; extra == "a-share"
+Requires-Dist: akshare>=1.14.0; extra == "a-share"
+Requires-Dist: pandas>=2.0.0; extra == "a-share"
+
+# dual-lens-value-screener
+
+格雷厄姆 / 巴菲特双视角筛选：FastAPI、`batch-screen` 全 A 拉数（TuShare + AkShare 主备）、**MySQL 持久化历史 Run**、**Redis 分页缓存**、**Vite + React 结果页**。
+
+OpenSpec：`openspec/changes/dual-lens-value-screener/`、`openspec/changes/screening-results-mysql-redis-ui/`；已归档见 `openspec/changes/archive/`。
+
+## 安装
+
+```bash
+cd dual-lens-value-screener
+pip install -e ".[a-share]"
+```
+
+- `TUSHARE_TOKEN`：TuShare 必填（[tushare.pro](https://tushare.pro)）。
+- `VALUE_SCREENER_PRIMARY`：`tushare` | `akshare`。
+- `VALUE_SCREENER_REQUEST_SLEEP`：逐标的间隔秒数，默认 `0.12`。
+- `DATABASE_URL`：本机常见 `mysql+pymysql://root:root@127.0.0.1:3306/value_screener`；若用仓库内 `docker-compose` 则为 `screener:screener`（见 `.env.example`）。
+- `REDIS_URL`：如 `redis://127.0.0.1:6379/0`（可选，不配置则跳过缓存）。
+- `CACHE_TTL_SECONDS`：分页缓存 TTL，默认 `120`。
+
+## Docker（MySQL + Redis）
+
+```bash
+docker compose up -d
+```
+
+根目录 `docker-compose.yml`：MySQL `3306`（库 `value_screener` / 用户 `screener` / 密码 `screener`），Redis `6379`。
+
+## 数据库迁移
+
+```bash
+set DATABASE_URL=mysql+pymysql://root:root@127.0.0.1:3306/value_screener
+alembic upgrade head
+```
+
+## 一键开发（Windows）
+
+```powershell
+.\scripts\dev.ps1
+```
+
+假定本机 MySQL/Redis 已就绪（不执行 compose）、尝试 `alembic upgrade`，并新开两个窗口分别运行 **uvicorn :8000** 与 **Vite :5173**。
+
+## HTTP API
+
+```bash
+uvicorn value_screener.interfaces.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+- `GET /health`
+- `GET /v1/examples`、`POST /v1/screen`（手工快照算分）
+- `POST /api/v1/runs/batch-screen`：一键批跑并入库（主 TuShare / 备 AkShare，body 可选 `{"max_symbols":150}`，同步耗时较长）
+- `GET /api/v1/runs`：最近 screening 批次
+- `GET /api/v1/runs/{id}/results?page=&page_size=&sort=buffett|graham&order=asc|desc`：服务端分页排序（默认 Buffett 降序 + `symbol` 升序 tie-break）
+
+## 批跑 CLI
+
+```bash
+value-screener batch-screen --max-symbols 20 --primary akshare -o out.json --persist
+```
+
+`--persist` 将本次 `results` 写入 **新** `screening_run`（历史保留）。需已配置 `DATABASE_URL` 且已迁移。
+
+## 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+开发态通过 Vite 代理访问 `/api/v1/*`。顶部可一键批跑入库（TuShare 优先）；选择 Run、切换 Graham/Buffett 排序、表格分页均走后端。
+
+## 测试
+
+```bash
+pip install -e ".[dev,a-share]"
+python -m unittest discover -s tests -p "test_*.py" -v
+```
