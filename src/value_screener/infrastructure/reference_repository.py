@@ -71,6 +71,16 @@ class ReferenceMasterRepository:
             written += len(chunk)
         return written
 
+    def list_active_ts_codes(self, conn: Connection) -> list[str]:
+        """已上市（list_status=L）证券 ts_code，按代码排序；表空则返回 []."""
+
+        stmt = (
+            select(security_reference.c.ts_code)
+            .where(security_reference.c.list_status == "L")
+            .order_by(security_reference.c.ts_code)
+        )
+        return [str(r[0]) for r in conn.execute(stmt)]
+
     def fetch_by_ts_codes(self, conn: Connection, ts_codes: Sequence[str]) -> dict[str, dict[str, Any]]:
         if not ts_codes:
             return {}
@@ -79,3 +89,12 @@ class ReferenceMasterRepository:
         for r in conn.execute(stmt).mappings():
             out[str(r["ts_code"])] = dict(r)
         return out
+
+    def fetch_one_by_ts_code(self, conn: Connection, ts_code: str) -> dict[str, Any] | None:
+        """按 ts_code 读取一行主数据；不存在返回 None。"""
+
+        code = str(ts_code).strip()
+        if not code:
+            return None
+        got = self.fetch_by_ts_codes(conn, [code])
+        return got.get(code)

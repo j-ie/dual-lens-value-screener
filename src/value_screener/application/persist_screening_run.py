@@ -5,22 +5,38 @@ from typing import Any
 from sqlalchemy.engine import Engine
 
 from value_screener.application.batch_screening_service import BatchScreeningResult
+from value_screener.domain.assessment_coverage import combined_linear_score, dual_lens_coverage_ok
+from value_screener.domain.combined_ranking_params import CombinedRankingParams
 from value_screener.infrastructure.screening_repository import ScreeningRepository
 
 
-def _rows_from_screening_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _rows_from_screening_results(
+    results: list[dict[str, Any]],
+    ranking: CombinedRankingParams,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in results:
         g = item["graham"]
         b = item["buffett"]
+        bs = float(b["score"])
+        gs = float(g["score"])
+        cov = dual_lens_coverage_ok(g, b)
+        comb = combined_linear_score(
+            bs,
+            gs,
+            weight_buffett=ranking.weight_buffett,
+            weight_graham=ranking.weight_graham,
+        )
         rows.append(
             {
                 "symbol": item["symbol"],
-                "graham_score": float(g["score"]),
-                "buffett_score": float(b["score"]),
+                "graham_score": gs,
+                "buffett_score": bs,
                 "graham_json": g,
                 "buffett_json": b,
                 "provenance_json": item.get("provenance"),
+                "combined_score": comb,
+                "coverage_ok": cov,
             }
         )
     return rows
@@ -36,13 +52,18 @@ def persist_batch_screening(
 
     repo = ScreeningRepository(engine)
     meta: dict[str, Any] = dict(batch.meta)
+    ranking = CombinedRankingParams.from_env()
     with engine.begin() as conn:
         run_id = repo.create_run(
             conn,
             provider_label=provider_label,
             meta=meta,
         )
-        repo.bulk_insert_results(conn, run_id, _rows_from_screening_results(batch.results))
+        repo.bulk_insert_results(
+            conn,
+            run_id,
+            _rows_from_screening_results(batch.results, ranking),
+        )
         repo.finalize_run(
             conn,
             run_id,
@@ -79,8 +100,13 @@ def persist_batch_screening_for_run(
 
     repo = ScreeningRepository(engine)
     meta: dict[str, Any] = dict(batch.meta)
+    ranking = CombinedRankingParams.from_env()
     with engine.begin() as conn:
-        repo.bulk_insert_results(conn, run_id, _rows_from_screening_results(batch.results))
+        repo.bulk_insert_results(
+            conn,
+            run_id,
+            _rows_from_screening_results(batch.results, ranking),
+        )
         repo.finalize_run(
             conn,
             run_id,

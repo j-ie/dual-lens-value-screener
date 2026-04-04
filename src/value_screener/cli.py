@@ -57,11 +57,33 @@ def main(argv: list[str] | None = None) -> int:
         help="将 TuShare stock_basic 同步到 MySQL 表 security_reference（需 TUSHARE_TOKEN 与 DATABASE_URL）",
     )
 
+    sync_fs = sub.add_parser(
+        "sync-financial-statements",
+        help="从 TuShare 同步利润表/资产负债表/现金流量表至 MySQL（需 TUSHARE_TOKEN、DATABASE_URL，建议先 alembic upgrade）",
+    )
+    sync_fs.add_argument("--max-symbols", type=int, default=None, help="最多处理标的数，用于试跑")
+    sync_fs.add_argument(
+        "--since-years",
+        type=int,
+        default=3,
+        help="报告期窗口：从当前年起向前 since_years 个日历年（默认 3）",
+    )
+
+    attach_tl = sub.add_parser(
+        "attach-third-lens",
+        help="对已有 screening_run 写入第三套分与三元综合分（需 DATABASE_URL、fs_income、security_reference，建议先 alembic upgrade 006）",
+    )
+    attach_tl.add_argument("--run-id", type=int, required=True, dest="run_id", help="screening_run.id")
+
     args = parser.parse_args(argv)
     if args.command == "batch-screen":
         return _run_batch_screen(args)
     if args.command == "sync-reference":
         return _run_sync_reference()
+    if args.command == "sync-financial-statements":
+        return _run_sync_financial_statements(args)
+    if args.command == "attach-third-lens":
+        return _run_attach_third_lens(args)
     return 1
 
 
@@ -73,6 +95,9 @@ def _run_batch_screen(args: argparse.Namespace) -> int:
         primary_backend=primary,
         max_symbols=base.max_symbols,
         request_sleep_seconds=base.request_sleep_seconds,
+        tushare_max_workers=base.tushare_max_workers,
+        tushare_max_retries=base.tushare_max_retries,
+        tushare_retry_backoff_seconds=base.tushare_retry_backoff_seconds,
     )
     symbols = None
     if args.symbols_file is not None:
@@ -134,6 +159,67 @@ def _run_sync_reference() -> int:
         logging.exception("同步失败: %s", exc)
         return 1
     logging.info("security_reference 已同步，约 %s 行", n)
+    return 0
+
+
+def _run_sync_financial_statements(args: argparse.Namespace) -> int:
+    from value_screener.application.sync_financial_statements import sync_financial_statements_to_mysql
+    from value_screener.infrastructure.app_db import get_engine
+
+    base = AShareIngestionSettings.from_env()
+    token = (base.tushare_token or "").strip()
+    if not token:
+        logging.error("未配置 TUSHARE_TOKEN")
+        return 1
+    if args.since_years < 1:
+        logging.error("--since-years 至少为 1")
+        return 1
+    try:
+        engine = get_engine()
+    except Exception as exc:  # noqa: BLE001
+        logging.error("数据库不可用: %s", exc)
+        return 1
+    try:
+        meta = sync_financial_statements_to_mysql(
+            engine,
+            base,
+            token,
+            max_symbols=args.max_symbols,
+            since_years=args.since_years,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("财报同步失败: %s", exc)
+        return 1
+    logging.info(
+        "财报同步完成 universe=%s ok=%s failures=%s workers=%s window=[%s,%s]",
+        meta.get("universe"),
+        meta.get("ok"),
+        len(meta.get("failures") or []),
+        meta.get("workers"),
+        meta.get("api_start"),
+        meta.get("api_end"),
+    )
+    return 0
+
+
+def _run_attach_third_lens(args: argparse.Namespace) -> int:
+    from value_screener.application.attach_third_lens_scores import attach_third_lens_for_run
+    from value_screener.infrastructure.app_db import get_engine
+
+    try:
+        engine = get_engine()
+    except Exception as exc:  # noqa: BLE001
+        logging.error("数据库不可用: %s", exc)
+        return 1
+    try:
+        meta = attach_third_lens_for_run(engine, args.run_id)
+    except ValueError as exc:
+        logging.error("%s", exc)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("attach-third-lens 失败: %s", exc)
+        return 1
+    logging.info("第三套分已写入 run_id=%s updated=%s", meta.get("run_id"), meta.get("updated"))
     return 0
 
 

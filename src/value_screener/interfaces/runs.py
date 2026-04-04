@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from value_screener.application.batch_screening_workflow import run_batch_screen_background
+from value_screener.application.company_detail_query import CompanyDetailQueryService
 from value_screener.application.persist_screening_run import create_running_screening_run
 from value_screener.application.result_enrichment import enrich_screening_result_row
+from value_screener.domain.combined_ranking_params import CombinedRankingParams
+from value_screener.domain.triple_composite_params import TripleCompositeParams
 from value_screener.infrastructure.app_db import get_engine
 from value_screener.infrastructure.settings import AShareIngestionSettings
 from value_screener.infrastructure.result_cache import (
@@ -16,6 +19,7 @@ from value_screener.infrastructure.result_cache import (
     cache_key,
     cache_set_json,
     cache_ttl_seconds,
+    industries_cache_fingerprint,
 )
 from value_screener.infrastructure.screening_repository import RunRow, ScreeningRepository
 
@@ -45,6 +49,11 @@ class ResultItem(BaseModel):
     symbol: str
     graham_score: float
     buffett_score: float
+    combined_score: float | None = None
+    third_lens_score: float | None = None
+    third_lens: dict[str, Any] | None = None
+    final_triple_score: float | None = None
+    coverage_ok: bool = True
     graham: dict[str, Any]
     buffett: dict[str, Any]
     provenance: dict[str, Any] | None
@@ -65,6 +74,42 @@ class PagedResults(BaseModel):
     page_size: int
     sort: str
     order: str
+
+
+class RunIndustriesResponse(BaseModel):
+    """`industry` 查询参数多选 OR；空行业为字面量 `__EMPTY__`（与 INDUSTRY_EMPTY_QUERY_VALUE 一致）。"""
+
+    industries: list[str]
+
+
+class CompanyDetailRunMeta(BaseModel):
+    id: int
+    status: str
+    created_at: str | None
+    finished_at: str | None
+
+
+class LiveQuoteBlock(BaseModel):
+    ok: bool
+    fetched_at: str
+    error: str | None = None
+    data: dict[str, Any] | None = None
+
+
+class CompanyFinancialsSection(BaseModel):
+    income: list[dict[str, Any]]
+    balance: list[dict[str, Any]]
+    cashflow: list[dict[str, Any]]
+
+
+class CompanyDetailResponse(BaseModel):
+    run_id: int
+    ts_code: str
+    run: CompanyDetailRunMeta
+    run_snapshot: dict[str, Any]
+    reference: dict[str, Any] | None
+    financials: CompanyFinancialsSection
+    live_quote: LiveQuoteBlock
 
 
 class BatchScreenTriggerRequest(BaseModel):
@@ -203,20 +248,97 @@ def get_run(run_id: int) -> RunListItem:
     return _run_to_item(row)
 
 
+@router.get(
+    "/runs/{run_id}/companies/{ts_code}/detail",
+    response_model=CompanyDetailResponse,
+)
+def company_detail(
+    run_id: int,
+    ts_code: str,
+    include_financial_payload: bool = Query(False, description="为 true 时财报行附带 payload JSON"),
+    financial_limit: int = Query(12, ge=1, le=48, description="每表最多返回的报告期条数"),
+) -> CompanyDetailResponse:
+    """
+    单公司详情：Run 内冻结筛分快照 + 主数据 + 三大表摘要 + 独立拉取的日 K 行情（与算分时刻无关）。
+    ts_code 须为 TuShare 格式，如 600519.SH。
+    """
+
+    try:
+        engine = get_engine()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    svc = CompanyDetailQueryService(engine)
+    try:
+        payload = svc.load(
+            run_id,
+            ts_code,
+            include_financial_payload=include_financial_payload,
+            financial_limit=financial_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    err = payload.get("_error")
+    if err == "run_not_found":
+        raise HTTPException(status_code=404, detail="run 不存在")
+    if err == "symbol_not_in_run":
+        raise HTTPException(status_code=404, detail="该 run 中无此标的")
+
+    lq = payload["live_quote"]
+    return CompanyDetailResponse(
+        run_id=int(payload["run_id"]),
+        ts_code=str(payload["ts_code"]),
+        run=CompanyDetailRunMeta.model_validate(payload["run"]),
+        run_snapshot=payload["run_snapshot"],
+        reference=payload.get("reference"),
+        financials=CompanyFinancialsSection.model_validate(payload["financials"]),
+        live_quote=LiveQuoteBlock.model_validate(lq),
+    )
+
+
+@router.get("/runs/{run_id}/result-industries", response_model=RunIndustriesResponse)
+def list_run_industries(run_id: int) -> RunIndustriesResponse:
+    """当前 run 结果集中出现的去重行业，供筛选下拉；空参考行业为 `__EMPTY__`。"""
+
+    try:
+        engine = get_engine()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    repo = ScreeningRepository(engine)
+    with engine.connect() as conn:
+        if repo.get_run(conn, run_id) is None:
+            raise HTTPException(status_code=404, detail="run 不存在")
+        industries = repo.list_distinct_industries_for_run(conn, run_id)
+    return RunIndustriesResponse(industries=industries)
+
+
 @router.get("/runs/{run_id}/results", response_model=PagedResults)
 def paged_results(
     run_id: int,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    sort: Literal["buffett", "graham"] = "buffett",
+    sort: Literal["buffett", "graham", "combined", "industry", "third_lens", "triple"] = "buffett",
     order: Literal["asc", "desc"] = "desc",
+    industry: Annotated[list[str] | None, Query()] = None,
 ) -> PagedResults:
     try:
         engine = get_engine()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    ck = cache_key(run_id, page, page_size, sort, order)
+    ind_list = list(industry) if industry else []
+    ranking = CombinedRankingParams.from_env()
+    fp_parts: list[str] = []
+    if sort == "combined":
+        fp_parts.append(ranking.cache_fingerprint())
+    if sort == "triple":
+        fp_parts.append(TripleCompositeParams.from_env().cache_fingerprint())
+    ind_fp = industries_cache_fingerprint(ind_list)
+    if ind_fp:
+        fp_parts.append(ind_fp)
+    fp_merged = "|".join(fp_parts) if fp_parts else ""
+    ck = cache_key(run_id, page, page_size, sort, order, filter_fingerprint=fp_merged)
     ttl = cache_ttl_seconds()
     cached = cache_get_json(ck)
     if cached is not None:
@@ -231,6 +353,8 @@ def paged_results(
             order=order,
             page=page,
             page_size=page_size,
+            ranking=ranking if sort == "combined" else None,
+            industries=ind_list if ind_list else None,
         )
 
     enriched = [enrich_screening_result_row(x) for x in page_data.items]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -48,7 +49,25 @@ screening_result = Table(
     Column("graham_json", JSON, nullable=False),
     Column("buffett_json", JSON, nullable=False),
     Column("provenance_json", JSON, nullable=True),
+    Column("combined_score", Numeric(12, 4), nullable=True),
+    Column("coverage_ok", Boolean, nullable=False),
+    Column("third_lens_score", Numeric(12, 4), nullable=True),
+    Column("third_lens_json", JSON, nullable=True),
+    Column("final_triple_score", Numeric(12, 4), nullable=True),
     UniqueConstraint("run_id", "symbol", name="uk_screening_result_run_symbol"),
+)
+
+financial_snapshot = Table(
+    "financial_snapshot",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("symbol", String(32), nullable=False),
+    Column("financials_end_date", String(16), nullable=False, server_default=""),
+    Column("snapshot_json", JSON, nullable=False),
+    Column("data_source", String(64), nullable=True),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+    Column("content_hash", String(64), nullable=True),
+    UniqueConstraint("symbol", "financials_end_date", name="uk_financial_snapshot_sym_period"),
 )
 
 security_reference = Table(

@@ -4,16 +4,20 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Literal, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
-from sqlalchemy import Select, desc, func, insert, select, text, update
+from sqlalchemy import Select, and_, asc, desc, func, insert, or_, select, text, update
 from sqlalchemy.engine import Connection, Engine
 
 from value_screener.domain.batch_run_progress import strip_progress_keys
+from value_screener.domain.combined_ranking_params import CombinedRankingParams
 from value_screener.infrastructure.screening_schema import screening_result, screening_run, security_reference
 
-SortKey = Literal["buffett", "graham"]
+SortKey = Literal["buffett", "graham", "combined", "industry", "third_lens", "triple"]
 OrderKey = Literal["asc", "desc"]
+
+# 与 facets 及筛选参数一致：空/未匹配 reference 的行业用该字面量
+INDUSTRY_EMPTY_QUERY_VALUE = "__EMPTY__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +233,34 @@ class ScreeningRepository:
             )
         return out
 
+    def list_distinct_industries_for_run(
+        self,
+        conn: Connection,
+        run_id: int,
+        *,
+        limit: int = 500,
+    ) -> list[str]:
+        """某 run 结果 JOIN 参考表后的去重行业（空行业 → INDUSTRY_EMPTY_QUERY_VALUE）。"""
+
+        stmt = (
+            select(security_reference.c.industry)
+            .select_from(
+                screening_result.outerjoin(
+                    security_reference,
+                    screening_result.c.symbol == security_reference.c.ts_code,
+                )
+            )
+            .where(screening_result.c.run_id == run_id)
+            .distinct()
+            .limit(limit)
+        )
+        raw = {row[0] for row in conn.execute(stmt)}
+        out: set[str] = set()
+        for v in raw:
+            s = (v or "").strip()
+            out.add(INDUSTRY_EMPTY_QUERY_VALUE if not s else s)
+        return sorted(out)
+
     def page_results(
         self,
         conn: Connection,
@@ -238,19 +270,83 @@ class ScreeningRepository:
         order: OrderKey,
         page: int,
         page_size: int,
+        ranking: CombinedRankingParams | None = None,
+        industries: list[str] | None = None,
     ) -> ResultPage:
         if page < 1:
             page = 1
         if page_size < 1 or page_size > 500:
             page_size = 20
 
-        sort_col = screening_result.c.buffett_score if sort_key == "buffett" else screening_result.c.graham_score
-        order_clause = desc(sort_col) if order == "desc" else sort_col.asc()
-        second_clause = screening_result.c.symbol.asc()
+        inds = [i.strip() for i in (industries or []) if i and i.strip()]
 
-        count_stmt = select(func.count()).select_from(screening_result).where(
-            screening_result.c.run_id == run_id
+        wb = ranking.weight_buffett if ranking is not None else 0.5
+        wg = ranking.weight_graham if ranking is not None else 0.5
+        combined_linear = (
+            screening_result.c.buffett_score * wb + screening_result.c.graham_score * wg
         )
+        coalesced_combined = func.coalesce(screening_result.c.combined_score, combined_linear)
+
+        base_where = screening_result.c.run_id == run_id
+        where_clause: Any = base_where
+        if sort_key == "combined":
+            if ranking is None:
+                raise ValueError("sort=combined 时必须提供 CombinedRankingParams")
+            parts: list[Any] = [
+                base_where,
+                screening_result.c.coverage_ok.is_(True),
+            ]
+            if ranking.gate_min_buffett is not None:
+                parts.append(screening_result.c.buffett_score >= ranking.gate_min_buffett)
+            if ranking.gate_min_graham is not None:
+                parts.append(screening_result.c.graham_score >= ranking.gate_min_graham)
+            if ranking.gate_min_combined is not None:
+                parts.append(coalesced_combined >= ranking.gate_min_combined)
+            where_clause = and_(*parts)
+
+        if inds:
+            ind_or = _industry_filter_or(inds)
+            where_clause = and_(where_clause, ind_or)
+
+        join_from = screening_result.outerjoin(
+            security_reference,
+            screening_result.c.symbol == security_reference.c.ts_code,
+        )
+
+        if sort_key == "buffett":
+            sort_col = screening_result.c.buffett_score
+            order_clause = desc(sort_col) if order == "desc" else asc(sort_col)
+            second_clause = screening_result.c.symbol.asc()
+            order_by_list = [order_clause, second_clause]
+        elif sort_key == "graham":
+            sort_col = screening_result.c.graham_score
+            order_clause = desc(sort_col) if order == "desc" else asc(sort_col)
+            second_clause = screening_result.c.symbol.asc()
+            order_by_list = [order_clause, second_clause]
+        elif sort_key == "industry":
+            ind_sort = func.coalesce(security_reference.c.industry, "")
+            primary = desc(ind_sort) if order == "desc" else asc(ind_sort)
+            order_by_list = [primary, screening_result.c.symbol.asc()]
+        elif sort_key == "third_lens":
+            sentinel = -10**9 if order == "desc" else 10**9
+            sort_col = func.coalesce(screening_result.c.third_lens_score, sentinel)
+            order_clause = desc(sort_col) if order == "desc" else asc(sort_col)
+            order_by_list = [order_clause, screening_result.c.symbol.asc()]
+        elif sort_key == "triple":
+            sentinel = -10**9 if order == "desc" else 10**9
+            sort_col = func.coalesce(screening_result.c.final_triple_score, sentinel)
+            order_clause = desc(sort_col) if order == "desc" else asc(sort_col)
+            order_by_list = [order_clause, screening_result.c.symbol.asc()]
+        else:
+            primary = desc(coalesced_combined) if order == "desc" else asc(coalesced_combined)
+            if ranking is not None and ranking.tiebreak == "sum_bg":
+                tie = screening_result.c.buffett_score + screening_result.c.graham_score
+            else:
+                tie = func.least(screening_result.c.buffett_score, screening_result.c.graham_score)
+            tie_ord = desc(tie) if order == "desc" else asc(tie)
+            order_by_list = [primary, tie_ord, screening_result.c.symbol.asc()]
+
+        count_stmt = select(func.count()).select_from(join_from).where(where_clause)
         total = int(conn.execute(count_stmt).scalar_one())
 
         offset = (page - 1) * page_size
@@ -262,39 +358,125 @@ class ScreeningRepository:
                 screening_result.c.graham_json,
                 screening_result.c.buffett_json,
                 screening_result.c.provenance_json,
+                screening_result.c.combined_score,
+                screening_result.c.coverage_ok,
+                screening_result.c.third_lens_score,
+                screening_result.c.third_lens_json,
+                screening_result.c.final_triple_score,
                 security_reference.c.name.label("ref_name"),
                 security_reference.c.fullname.label("ref_fullname"),
                 security_reference.c.industry.label("ref_industry"),
                 security_reference.c.area.label("ref_area"),
             )
-            .select_from(
-                screening_result.outerjoin(
-                    security_reference,
-                    screening_result.c.symbol == security_reference.c.ts_code,
-                )
-            )
-            .where(screening_result.c.run_id == run_id)
-            .order_by(order_clause, second_clause)
+            .select_from(join_from)
+            .where(where_clause)
+            .order_by(*order_by_list)
             .offset(offset)
             .limit(page_size)
         )
         items: list[dict[str, Any]] = []
         for r in conn.execute(data_stmt).mappings():
-            items.append(
-                {
-                    "symbol": r["symbol"],
-                    "graham_score": _decimal_to_float(r["graham_score"]),
-                    "buffett_score": _decimal_to_float(r["buffett_score"]),
-                    "graham": r["graham_json"],
-                    "buffett": r["buffett_json"],
-                    "provenance": r["provenance_json"],
-                    "ref_name": r["ref_name"],
-                    "ref_fullname": r["ref_fullname"],
-                    "ref_industry": r["ref_industry"],
-                    "ref_area": r["ref_area"],
-                }
-            )
+            items.append(_mapping_to_screening_item(r, wb=wb, wg=wg))
         return ResultPage(items=items, total=total)
+
+    def get_result_row_for_run_symbol(
+        self,
+        conn: Connection,
+        run_id: int,
+        ts_code: str,
+        *,
+        ranking: CombinedRankingParams | None = None,
+    ) -> dict[str, Any] | None:
+        """单标的筛选结果行（含 ref_* JOIN）；不在该 run 中则 None。"""
+
+        code = str(ts_code).strip()
+        if not code:
+            return None
+        wb = ranking.weight_buffett if ranking is not None else 0.5
+        wg = ranking.weight_graham if ranking is not None else 0.5
+        join_from = screening_result.outerjoin(
+            security_reference,
+            screening_result.c.symbol == security_reference.c.ts_code,
+        )
+        stmt = (
+            select(
+                screening_result.c.symbol,
+                screening_result.c.graham_score,
+                screening_result.c.buffett_score,
+                screening_result.c.graham_json,
+                screening_result.c.buffett_json,
+                screening_result.c.provenance_json,
+                screening_result.c.combined_score,
+                screening_result.c.coverage_ok,
+                screening_result.c.third_lens_score,
+                screening_result.c.third_lens_json,
+                screening_result.c.final_triple_score,
+                security_reference.c.name.label("ref_name"),
+                security_reference.c.fullname.label("ref_fullname"),
+                security_reference.c.industry.label("ref_industry"),
+                security_reference.c.area.label("ref_area"),
+            )
+            .select_from(join_from)
+            .where(
+                and_(
+                    screening_result.c.run_id == run_id,
+                    screening_result.c.symbol == code,
+                )
+            )
+            .limit(1)
+        )
+        r = conn.execute(stmt).mappings().first()
+        if r is None:
+            return None
+        return _mapping_to_screening_item(r, wb=wb, wg=wg)
+
+
+def _mapping_to_screening_item(r: Mapping[str, Any], *, wb: float, wg: float) -> dict[str, Any]:
+    bsc = _decimal_to_float(r["buffett_score"])
+    gsc = _decimal_to_float(r["graham_score"])
+    cc_raw = r["combined_score"]
+    cc = _decimal_to_float(cc_raw) if cc_raw is not None else round(wb * bsc + wg * gsc, 4)
+    tls_raw = r.get("third_lens_score")
+    tls = _decimal_to_float(tls_raw) if tls_raw is not None else None
+    fts_raw = r.get("final_triple_score")
+    fts = _decimal_to_float(fts_raw) if fts_raw is not None else None
+    tlj = r.get("third_lens_json")
+    third_lens_obj = dict(tlj) if isinstance(tlj, dict) else None
+    return {
+        "symbol": r["symbol"],
+        "graham_score": gsc,
+        "buffett_score": bsc,
+        "graham": r["graham_json"],
+        "buffett": r["buffett_json"],
+        "provenance": r["provenance_json"],
+        "combined_score": cc,
+        "coverage_ok": bool(r["coverage_ok"]),
+        "third_lens_score": tls,
+        "third_lens": third_lens_obj,
+        "final_triple_score": fts,
+        "ref_name": r["ref_name"],
+        "ref_fullname": r["ref_fullname"],
+        "ref_industry": r["ref_industry"],
+        "ref_area": r["ref_area"],
+    }
+
+
+def _industry_filter_or(industries: list[str]) -> Any:
+    parts: list[Any] = []
+    for raw in industries:
+        s = raw.strip()
+        if s == INDUSTRY_EMPTY_QUERY_VALUE or s == "":
+            parts.append(
+                or_(
+                    security_reference.c.industry.is_(None),
+                    security_reference.c.industry == "",
+                )
+            )
+        else:
+            parts.append(security_reference.c.industry == s)
+    if len(parts) == 1:
+        return parts[0]
+    return or_(*parts)
 
 
 def _decimal_to_float(v: Any) -> float:

@@ -1,3 +1,7 @@
 scripts/.dev-shell-pids.json
 .env
 .idea/
+
+# Frontend: dependencies and build output (do not commit)
+frontend/node_modules/
+frontend/dist/

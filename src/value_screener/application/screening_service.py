@@ -26,6 +26,7 @@ class ScreeningApplicationService:
                         "data_source": snap.data_source,
                         "trade_cal_date": snap.trade_cal_date,
                         "financials_end_date": snap.financials_end_date,
+                        "market_cap": float(snap.market_cap),
                     },
                     "graham": asdict(g),
                     "buffett": asdict(b),

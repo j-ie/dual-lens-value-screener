@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from functools import lru_cache
@@ -8,7 +9,7 @@ from typing import Any
 DEFAULT_TTL = 120
 
 # 分页 JSON 形状变更时递增，避免 Redis 返回缺字段的旧缓存
-RESULT_CACHE_ENRICH_VER = "enrich_v1"
+RESULT_CACHE_ENRICH_VER = "enrich_v3"
 
 
 @lru_cache(maxsize=1)
@@ -29,15 +30,29 @@ def cache_ttl_seconds() -> int:
         return DEFAULT_TTL
 
 
+def industries_cache_fingerprint(industries: list[str] | None) -> str:
+    """稳定编码行业多选，用于 Redis 键（与查询 OR 语义一致）。"""
+
+    if not industries:
+        return ""
+    norm = sorted({i.strip() for i in industries if i and i.strip()})
+    if not norm:
+        return ""
+    digest = hashlib.sha256("|".join(norm).encode("utf-8")).hexdigest()[:20]
+    return f"ind:{digest}"
+
+
 def cache_key(
     run_id: int,
     page: int,
     page_size: int,
     sort_key: str,
     order: str,
+    filter_fingerprint: str = "",
 ) -> str:
+    fp = filter_fingerprint or "none"
     return (
-        f"scr:{RESULT_CACHE_ENRICH_VER}:r{run_id}:p{page}:s{page_size}:k{sort_key}:o{order}"
+        f"scr:{RESULT_CACHE_ENRICH_VER}:r{run_id}:p{page}:s{page_size}:k{sort_key}:o{order}:f{fp}"
     )
 
 

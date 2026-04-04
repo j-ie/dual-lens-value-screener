@@ -102,6 +102,9 @@ def execute_batch_screen(
         primary_backend=primary_backend,
         max_symbols=base.max_symbols,
         request_sleep_seconds=base.request_sleep_seconds,
+        tushare_max_workers=base.tushare_max_workers,
+        tushare_max_retries=base.tushare_max_retries,
+        tushare_retry_backoff_seconds=base.tushare_retry_backoff_seconds,
     )
     provider = build_composite_provider(settings)
     batch_svc = BatchScreeningApplicationService(provider, ScreeningApplicationService())
