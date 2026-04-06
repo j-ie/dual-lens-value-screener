@@ -4,4 +4,11 @@ scripts/.dev-shell-pids.json
 
 # Frontend: dependencies and build output (do not commit)
 frontend/node_modules/
+# Vite 预构建依赖缓存（dev/build 自动生成，非业务代码）
+**/.vite/
 frontend/dist/
+
+# Python bytecode / test cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
