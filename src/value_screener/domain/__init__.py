@@ -1,4 +1,5 @@
 from value_screener.domain.buffett import BuffettAssessor, BuffettAssessment
+from value_screener.domain.dcf import DcfInputs, DcfResult, DcfSkipped, compute_dcf
 from value_screener.domain.graham import GrahamAssessor, GrahamAssessment
 from value_screener.domain.scoring_params import BuffettScoringParams, GrahamScoringParams
 from value_screener.domain.snapshot import StockFinancialSnapshot
@@ -6,6 +7,10 @@ from value_screener.domain.snapshot import StockFinancialSnapshot
 __all__ = [
     "BuffettAssessor",
     "BuffettAssessment",
+    "DcfInputs",
+    "DcfResult",
+    "DcfSkipped",
+    "compute_dcf",
     "BuffettScoringParams",
     "GrahamAssessor",
     "GrahamAssessment",

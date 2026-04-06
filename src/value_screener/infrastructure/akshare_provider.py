@@ -83,7 +83,7 @@ class AkShareAShareProvider:
         with _without_env_proxy_for_akshare():
             time.sleep(self._sleep)
             spot = self._ak.stock_zh_a_spot_em()
-            mcap_map, trade_hint = _spot_mcap_map(spot)
+            mcap_map, dv_map, trade_hint = _spot_market_maps(spot)
             out: list[StockFinancialSnapshot | SymbolFetchFailure] = []
             total = len(ts_codes)
             for idx, ts_code in enumerate(ts_codes, start=1):
@@ -91,7 +91,7 @@ class AkShareAShareProvider:
                     on_progress(idx, total, ts_code)
                 try:
                     time.sleep(self._sleep)
-                    snap = self._fetch_one(ts_code, mcap_map, trade_hint)
+                    snap = self._fetch_one(ts_code, mcap_map, dv_map, trade_hint)
                     if snap is None:
                         out.append(
                             SymbolFetchFailure(
@@ -117,11 +117,13 @@ class AkShareAShareProvider:
         self,
         ts_code: str,
         mcap_map: dict[str, float],
+        dv_map: dict[str, float | None],
         trade_hint: str | None,
     ) -> StockFinancialSnapshot | None:
         market_cap = mcap_map.get(ts_code)
         if market_cap is None or market_cap <= 0:
             return None
+        dv_row = dv_map.get(ts_code)
         sym = to_ak_symbol(ts_code)
         bs = self._ak.stock_balance_sheet_by_report_em(symbol=sym)
         row_bs, fin_end = _latest_report_row(bs)
@@ -170,6 +172,8 @@ class AkShareAShareProvider:
             data_source=self.backend_name,
             trade_cal_date=trade_hint,
             financials_end_date=fin_end,
+            dv_ttm=dv_row,
+            dv_ratio=None,
         )
 
 
@@ -181,15 +185,50 @@ def _first_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
     return None
 
 
-def _spot_mcap_map(spot: pd.DataFrame) -> tuple[dict[str, float], str | None]:
+def em_spot_dividend_yield_percent_map() -> dict[str, float | None]:
+    """
+    东财 A 股现货全表：股息率（%%）→ ts_code。
+    TuShare daily_basic 的 dv_ratio/dv_ttm 对大量标的长期为空，用作补全数据源。
+    未安装 akshare 或拉取失败时返回空 dict。
+    """
+
+    try:
+        import akshare as ak
+    except ImportError:
+        logger.info("未安装 akshare，跳过东财股息率补全（TuShare 路径仍可拉数）")
+        return {}
+    try:
+        with _without_env_proxy_for_akshare():
+            spot = ak.stock_zh_a_spot_em()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("东财现货股息率补全失败（忽略，仅用 TuShare 股息字段）: %s", exc)
+        return {}
+    if spot is None or spot.empty:
+        return {}
+    _, dv_map, _ = _spot_market_maps(spot)
+    return dv_map
+
+
+def _spot_market_maps(
+    spot: pd.DataFrame,
+) -> tuple[dict[str, float], dict[str, float | None], str | None]:
     code_col = _first_col(spot, ("代码",)) or next(
         (c for c in spot.columns if "代码" in str(c)),
         None,
     )
     mcol = next((c for c in spot.columns if "总市值" in str(c)), None)
+    dv_col = next(
+        (
+            c
+            for c in spot.columns
+            if "股息率" in str(c) or str(c).strip() in ("股息率", "股息率%", "股息率％")
+        ),
+        None,
+    )
     if code_col is None or mcol is None:
-        return {}, None
+        return {}, {}, None
     out: dict[str, float] = {}
+    dv_out: dict[str, float | None] = {}
     for _, row in spot.iterrows():
         raw = str(row[code_col]).replace(".0", "").strip()
         digits = "".join(ch for ch in raw if ch.isdigit())
@@ -200,7 +239,13 @@ def _spot_mcap_map(spot: pd.DataFrame) -> tuple[dict[str, float], str | None]:
         if pd.isna(v) or float(v) <= 0:
             continue
         out[ts] = float(v)
-    return out, None
+        if dv_col is not None:
+            d = pd.to_numeric(row[dv_col], errors="coerce")
+            if pd.isna(d) or float(d) < 0:
+                dv_out[ts] = None
+            else:
+                dv_out[ts] = float(d)
+    return out, dv_out, None
 
 
 def _latest_report_row(df: pd.DataFrame | None) -> tuple[dict[str, Any] | None, str | None]:

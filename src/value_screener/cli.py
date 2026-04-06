@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -68,6 +69,22 @@ def main(argv: list[str] | None = None) -> int:
         default=3,
         help="报告期窗口：从当前年起向前 since_years 个日历年（默认 3）",
     )
+    sync_fs.add_argument(
+        "--scheduled-date",
+        type=str,
+        default=None,
+        help="调度日 YYYY-MM-DD（默认按 VALUE_SCREENER_FS_SYNC_SCHEDULE_TZ 时区的当天）",
+    )
+    sync_fs.add_argument(
+        "--reset-job",
+        action="store_true",
+        help="清除当日同参数 ingestion_job 游标后从头拉取",
+    )
+    sync_fs.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="忽略已存游标，从 universe 第一只开始（仍写入同一 job 键）",
+    )
 
     attach_tl = sub.add_parser(
         "attach-third-lens",
@@ -98,6 +115,10 @@ def _run_batch_screen(args: argparse.Namespace) -> int:
         tushare_max_workers=base.tushare_max_workers,
         tushare_max_retries=base.tushare_max_retries,
         tushare_retry_backoff_seconds=base.tushare_retry_backoff_seconds,
+        tushare_max_calls_per_minute=base.tushare_max_calls_per_minute,
+        tushare_rpm_headroom=base.tushare_rpm_headroom,
+        fs_sync_schedule_tz=base.fs_sync_schedule_tz,
+        batch_screen_persist_chunk_size=base.batch_screen_persist_chunk_size,
     )
     symbols = None
     if args.symbols_file is not None:
@@ -174,6 +195,13 @@ def _run_sync_financial_statements(args: argparse.Namespace) -> int:
     if args.since_years < 1:
         logging.error("--since-years 至少为 1")
         return 1
+    sched = None
+    if args.scheduled_date:
+        try:
+            sched = datetime.strptime(args.scheduled_date.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            logging.error("--scheduled-date 须为 YYYY-MM-DD")
+            return 1
     try:
         engine = get_engine()
     except Exception as exc:  # noqa: BLE001
@@ -186,18 +214,25 @@ def _run_sync_financial_statements(args: argparse.Namespace) -> int:
             token,
             max_symbols=args.max_symbols,
             since_years=args.since_years,
+            scheduled_date=sched,
+            resume=not args.no_resume,
+            reset_job=args.reset_job,
         )
     except Exception as exc:  # noqa: BLE001
         logging.exception("财报同步失败: %s", exc)
         return 1
     logging.info(
-        "财报同步完成 universe=%s ok=%s failures=%s workers=%s window=[%s,%s]",
+        "财报同步完成 universe=%s ok=%s failures=%s workers=%s window=[%s,%s] "
+        "scheduled_date=%s skipped_completed=%s resumed_from_index=%s",
         meta.get("universe"),
         meta.get("ok"),
         len(meta.get("failures") or []),
         meta.get("workers"),
         meta.get("api_start"),
         meta.get("api_end"),
+        meta.get("scheduled_date"),
+        meta.get("skipped_completed"),
+        meta.get("resumed_from_index"),
     )
     return 0
 

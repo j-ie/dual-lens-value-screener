@@ -10,8 +10,13 @@ from value_screener.domain.assessment_coverage import (
 )
 from value_screener.domain.combined_ranking_params import CombinedRankingParams, snapshot_ttl_seconds
 from value_screener.domain.snapshot import StockFinancialSnapshot
-from value_screener.infrastructure.result_cache import RESULT_CACHE_ENRICH_VER, cache_key
+from value_screener.infrastructure.result_cache import (
+    RESULT_CACHE_ENRICH_VER,
+    cache_key,
+    valuation_filters_cache_fingerprint,
+)
 from value_screener.infrastructure.screening_repository import ScreeningRepository
+from value_screener.infrastructure.settings import PostFullBatchPipelineSettings
 
 
 class CombinedRankingParamsTests(unittest.TestCase):
@@ -78,6 +83,11 @@ class CacheKeyTests(unittest.TestCase):
         self.assertIn("combined", k)
         self.assertIn("wb=0.5", k)
 
+    def test_valuation_filters_fingerprint_nonempty(self) -> None:
+        fp = valuation_filters_cache_fingerprint(1e9, 5e11, 1.0, 5.0)
+        self.assertIn("mcmin:", fp)
+        self.assertIn("dvmin:", fp)
+
 
 class PageResultsCombinedTests(unittest.TestCase):
     def test_page_results_combined_requires_ranking(self) -> None:
@@ -93,6 +103,40 @@ class PageResultsCombinedTests(unittest.TestCase):
                 page_size=10,
                 ranking=None,
             )
+
+
+class ListTopSymbolsByCombinedTests(unittest.TestCase):
+    def test_limit_zero_skips_query(self) -> None:
+        conn = MagicMock()
+        repo = ScreeningRepository(MagicMock())
+        p = CombinedRankingParams.from_env()
+        out = repo.list_top_symbols_by_combined(conn, 99, ranking=p, limit=0)
+        self.assertEqual(out, [])
+        conn.execute.assert_not_called()
+
+    def test_weighted_coverage_only_limit_zero(self) -> None:
+        conn = MagicMock()
+        repo = ScreeningRepository(MagicMock())
+        p = CombinedRankingParams.from_env()
+        out = repo.list_top_symbols_weighted_desc_coverage_only(conn, 99, ranking=p, limit=0)
+        self.assertEqual(out, [])
+        conn.execute.assert_not_called()
+
+
+class PostFullBatchPipelineSettingsTests(unittest.TestCase):
+    def test_top_n_and_sleep_from_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VALUE_SCREENER_POST_FULL_BATCH_AI_TOP_N": "50",
+                "VALUE_SCREENER_POST_FULL_BATCH_AI_SLEEP_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            s = PostFullBatchPipelineSettings.from_env()
+        self.assertEqual(s.ai_top_n, 50)
+        self.assertEqual(s.ai_sleep_seconds, 0.0)
+        self.assertTrue(s.attach_third_lens)
 
 
 class SnapshotTtlTests(unittest.TestCase):

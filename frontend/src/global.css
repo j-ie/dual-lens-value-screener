@@ -1,0 +1,265 @@
+/* 全局：偏苹果产品页的留白、细分割、胶囊控件 */
+:root {
+  --vs-content-max: 1180px;
+  --vs-ink: #1d1d1f;
+  --vs-ink-secondary: #6e6e73;
+  --vs-ink-tertiary: #86868b;
+  --vs-surface: #ffffff;
+  --vs-accent: #0066cc;
+  --vs-line: rgba(0, 0, 0, 0.08);
+  --vs-line-faint: rgba(0, 0, 0, 0.05);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--vs-ink);
+  background-color: #d1d5dc;
+  background-image:
+    radial-gradient(ellipse 100% 70% at 50% -25%, rgba(255, 255, 255, 0.95), transparent 55%),
+    linear-gradient(180deg, #c9ccd4 0%, #dfe1e6 45%, #ebecef 100%);
+}
+
+.vs-layout-root {
+  min-height: 100vh;
+  background: transparent !important;
+}
+
+.vs-sticky-top {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: saturate(200%) blur(24px);
+  -webkit-backdrop-filter: saturate(200%) blur(24px);
+  border-bottom: 1px solid var(--vs-line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.75) inset;
+}
+
+.vs-top-inner {
+  max-width: var(--vs-content-max);
+  margin: 0 auto;
+  padding: 20px 24px 18px;
+}
+
+.vs-top-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 18px;
+}
+
+.vs-brand-title {
+  margin: 0 !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.035em !important;
+  color: var(--vs-ink) !important;
+  font-size: 28px !important;
+  line-height: 1.1 !important;
+}
+
+.vs-brand-sub {
+  font-size: 14px !important;
+  color: var(--vs-ink-tertiary) !important;
+  letter-spacing: 0.01em;
+}
+
+.vs-segmented-wrap {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* 胶囊分段：浅轨 + 白底选中块 */
+.vs-main-segmented.ant-segmented {
+  border-radius: 999px !important;
+  padding: 4px !important;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+.vs-main-segmented.ant-segmented .ant-segmented-item {
+  border-radius: 999px !important;
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  padding: 8px 22px !important;
+  min-height: 40px !important;
+  color: var(--vs-ink-secondary) !important;
+}
+
+.vs-main-segmented.ant-segmented .ant-segmented-item-selected {
+  background: #fff !important;
+  color: var(--vs-ink) !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
+}
+
+.vs-layout-content {
+  background: transparent !important;
+}
+
+.vs-app-content {
+  max-width: var(--vs-content-max);
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+.vs-surface-card.ant-card {
+  border: 1px solid var(--vs-line-faint) !important;
+  border-radius: 18px !important;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 16px 40px -12px rgba(0, 0, 0, 0.1) !important;
+  background: var(--vs-surface) !important;
+  overflow: hidden;
+}
+
+.vs-surface-card.ant-card .ant-card-body {
+  padding: 28px 28px 24px !important;
+}
+
+/* 页面主标题：大字阶 */
+.vs-page-heading.ant-typography {
+  font-size: 34px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.038em !important;
+  line-height: 1.12 !important;
+  color: var(--vs-ink) !important;
+  margin-top: 0 !important;
+  margin-bottom: 10px !important;
+}
+
+.vs-page-lead {
+  font-size: 17px !important;
+  line-height: 1.5 !important;
+  color: var(--vs-ink-secondary) !important;
+  max-width: 62ch;
+  margin-bottom: 28px !important;
+}
+
+/* 筛选区：标签左、控件右，纵向疏朗 */
+.vs-filter-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-bottom: 28px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--vs-line-faint);
+}
+
+.vs-filter-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 132px) 1fr;
+  gap: 12px 20px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .vs-filter-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vs-filter-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vs-ink-secondary);
+  padding-top: 8px;
+  letter-spacing: 0.01em;
+}
+
+.vs-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+}
+
+.vs-toolbar-block {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--vs-line-faint);
+}
+
+.vs-toolbar-block .vs-toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vs-ink-secondary);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* 数据表：无边框、浅横线、略大行高 */
+.vs-data-table .ant-table {
+  background: transparent !important;
+}
+
+.vs-data-table.ant-table-wrapper .ant-table-thead > tr > th {
+  background: transparent !important;
+  border-bottom: 1px solid var(--vs-line) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: var(--vs-ink-tertiary) !important;
+  padding: 14px 12px 12px !important;
+}
+
+.vs-data-table.ant-table-wrapper .ant-table-thead > tr > th::before {
+  display: none !important;
+}
+
+.vs-data-table.ant-table-wrapper .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--vs-line-faint) !important;
+  padding: 16px 12px !important;
+  font-size: 14px;
+}
+
+.vs-data-table.ant-table-wrapper .ant-table-tbody > tr:last-child > td {
+  border-bottom: none !important;
+}
+
+.vs-data-table.ant-table-wrapper .ant-table-container {
+  border: none !important;
+}
+
+.vs-reading {
+  max-width: 720px;
+  line-height: 1.65;
+  font-size: 15px;
+  color: rgba(0, 0, 0, 0.78);
+}
+
+.vs-reading .ai-narrative-md h1,
+.vs-reading .ai-narrative-md h2,
+.vs-reading .ai-narrative-md h3 {
+  font-weight: 600;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+}
+
+.vs-reading .ai-narrative-md p {
+  margin: 0.6em 0;
+}
+
+.vs-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.45);
+  margin: 20px 0 8px;
+}
+
+.vs-dcf-card {
+  border: 1px solid var(--vs-line-faint);
+  border-radius: 14px;
+  padding: 16px 20px;
+  background: #fafafa;
+  margin-top: 12px;
+}

@@ -16,6 +16,8 @@ from value_screener.application.screening_service import ScreeningApplicationSer
 from value_screener.domain.combined_ranking_params import CombinedRankingParams
 from value_screener.domain.triple_composite_params import TripleCompositeParams
 from value_screener.domain.snapshot import StockFinancialSnapshot
+from value_screener.interfaces.ai_history import router as ai_history_router
+from value_screener.interfaces.market import router as market_router
 from value_screener.interfaces.reference import router as reference_router
 from value_screener.interfaces.runs import router as runs_router
 
@@ -44,7 +46,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(runs_router)
+app.include_router(ai_history_router)
 app.include_router(reference_router)
+app.include_router(market_router)
 _svc = ScreeningApplicationService()
 
 

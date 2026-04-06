@@ -31,6 +31,65 @@ def enrich_screening_result_row(row: dict[str, Any]) -> dict[str, Any]:
     buffett = row["buffett"]
     explanation = build_score_explanation_zh(graham, buffett, prov)
 
+    mcap_row = row.get("market_cap")
+    if mcap_row is not None:
+        try:
+            market_cap_val = float(mcap_row)
+        except (TypeError, ValueError):
+            market_cap_val = None
+    elif prov and prov.get("market_cap") is not None:
+        try:
+            market_cap_val = float(prov["market_cap"])
+        except (TypeError, ValueError):
+            market_cap_val = None
+    else:
+        market_cap_val = None
+
+    pe_raw = row.get("pe_ttm")
+    if pe_raw is not None:
+        try:
+            pe_ttm_val = float(pe_raw)
+        except (TypeError, ValueError):
+            pe_ttm_val = None
+    else:
+        pe_ttm_val = None
+
+    net_income_ttm_val: float | None = None
+    dv_ratio_val: float | None = None
+    dv_ttm_val: float | None = None
+    rf = row.get("run_fact_json")
+    if isinstance(rf, dict):
+        ni = rf.get("net_income_ttm")
+        if ni is not None:
+            try:
+                net_income_ttm_val = float(ni)
+            except (TypeError, ValueError):
+                net_income_ttm_val = None
+        dr = rf.get("dv_ratio")
+        if dr is not None:
+            try:
+                dv_ratio_val = float(dr)
+            except (TypeError, ValueError):
+                dv_ratio_val = None
+        dt = rf.get("dv_ttm")
+        if dt is not None:
+            try:
+                dv_ttm_val = float(dt)
+            except (TypeError, ValueError):
+                dv_ttm_val = None
+
+    if prov:
+        if dv_ratio_val is None and prov.get("dv_ratio") is not None:
+            try:
+                dv_ratio_val = float(prov["dv_ratio"])
+            except (TypeError, ValueError):
+                pass
+        if dv_ttm_val is None and prov.get("dv_ttm") is not None:
+            try:
+                dv_ttm_val = float(prov["dv_ttm"])
+            except (TypeError, ValueError):
+                pass
+
     return {
         "symbol": row["symbol"],
         "graham_score": row["graham_score"],
@@ -51,4 +110,15 @@ def enrich_screening_result_row(row: dict[str, Any]) -> dict[str, Any]:
         "trade_cal_date": trade_cal_date,
         "financials_end_date": financials_end_date,
         "data_source": data_source,
+        "ai_persist_id": row.get("ai_persist_id"),
+        "ai_score": row.get("ai_score"),
+        "opportunity_score": row.get("opportunity_score"),
+        "ai_analysis_date": row.get("ai_analysis_date"),
+        "ai_run_id": row.get("ai_run_id"),
+        "ai_summary_preview": row.get("ai_summary_preview"),
+        "market_cap": market_cap_val,
+        "pe_ttm": pe_ttm_val,
+        "net_income_ttm": net_income_ttm_val,
+        "dv_ratio": dv_ratio_val,
+        "dv_ttm": dv_ttm_val,
     }

@@ -7,12 +7,14 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     MetaData,
     Numeric,
     String,
     Table,
+    Text,
     UniqueConstraint,
 )
 
@@ -54,6 +56,9 @@ screening_result = Table(
     Column("third_lens_score", Numeric(12, 4), nullable=True),
     Column("third_lens_json", JSON, nullable=True),
     Column("final_triple_score", Numeric(12, 4), nullable=True),
+    Column("run_fact_json", JSON, nullable=True),
+    Column("market_cap", Numeric(24, 4), nullable=True),
+    Column("pe_ttm", Numeric(24, 8), nullable=True),
     UniqueConstraint("run_id", "symbol", name="uk_screening_result_run_symbol"),
 )
 
@@ -68,6 +73,48 @@ financial_snapshot = Table(
     Column("fetched_at", DateTime(timezone=True), nullable=False),
     Column("content_hash", String(64), nullable=True),
     UniqueConstraint("symbol", "financials_end_date", name="uk_financial_snapshot_sym_period"),
+)
+
+company_ai_analysis = Table(
+    "company_ai_analysis",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("ts_code", String(32), nullable=False),
+    Column("analysis_date", Date, nullable=False),
+    Column("run_id", BigInteger, ForeignKey("screening_run.id", ondelete="SET NULL"), nullable=True),
+    Column("ai_score", Numeric(8, 4), nullable=False),
+    Column("ai_score_rationale", String(512), nullable=True),
+    Column("summary", Text, nullable=False),
+    Column("key_metrics_commentary", Text, nullable=False),
+    Column("risks", Text, nullable=False),
+    Column("alignment_with_scores", Text, nullable=False),
+    Column("narrative_markdown", Text, nullable=False),
+    Column("context_hash", String(64), nullable=False),
+    Column("prompt_version", String(32), nullable=False),
+    Column("model", String(128), nullable=False),
+    Column("generated_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("dcf_json", JSON, nullable=True),
+    Column("dcf_ok", Boolean, nullable=True),
+    Column("dcf_headline", String(512), nullable=True),
+    Column("opportunity_score", Numeric(8, 4), nullable=True),
+    Column("opportunity_score_rationale", String(512), nullable=True),
+    UniqueConstraint("ts_code", "analysis_date", name="uk_company_ai_analysis_ts_date"),
+)
+
+ingestion_job = Table(
+    "ingestion_job",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("job_type", String(64), nullable=False),
+    Column("scheduled_date", Date, nullable=False),
+    Column("params_hash", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("cursor_ts_code", String(16), nullable=True),
+    Column("universe_fingerprint", String(64), nullable=True),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("job_type", "scheduled_date", "params_hash", name="uk_ingestion_job_key"),
 )
 
 security_reference = Table(

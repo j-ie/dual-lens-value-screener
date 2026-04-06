@@ -60,10 +60,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "==> API http://127.0.0.1:8000  frontend http://127.0.0.1:5173"
+$importDotenv = Join-Path $PSScriptRoot "import-dotenv.ps1"
 $pApi = Start-Process -FilePath $shellExe -PassThru -WindowStyle Normal -ArgumentList @(
     "-NoExit",
     "-Command",
-    "Set-Location '$Root'; `$env:PYTHONPATH='$Root\src'; `$env:DATABASE_URL='$env:DATABASE_URL'; `$env:REDIS_URL='$env:REDIS_URL'; python -m uvicorn value_screener.interfaces.main:app --reload --host 0.0.0.0 --port 8000"
+    ". `"$importDotenv`"; Import-RepoDotEnv -RepoRoot `"$Root`"; Set-Location `"$Root`"; `$env:PYTHONPATH='$Root\src'; `$env:DATABASE_URL='$env:DATABASE_URL'; `$env:REDIS_URL='$env:REDIS_URL'; python -m uvicorn value_screener.interfaces.main:app --reload --host 0.0.0.0 --port 8000"
 )
 $pFe = Start-Process -FilePath $shellExe -PassThru -WindowStyle Normal -ArgumentList @(
     "-NoExit",

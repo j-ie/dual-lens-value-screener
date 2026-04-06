@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { Button, Card, InputNumber, Progress, Select, Space, Table, Typography, message } from "antd";
+import { Link, useSearchParams } from "react-router-dom";
+import { Button, Card, Checkbox, Input, InputNumber, Progress, Select, Space, Table, Typography, message } from "antd";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 
 type RunItem = {
@@ -40,6 +40,14 @@ type PagedItem = {
   trade_cal_date: string | null;
   financials_end_date: string | null;
   data_source: string | null;
+  ai_score?: number | null;
+  opportunity_score?: number | null;
+  ai_analysis_date?: string | null;
+  ai_run_id?: number | null;
+  ai_summary_preview?: string | null;
+  market_cap?: number | null;
+  dv_ratio?: number | null;
+  dv_ttm?: number | null;
 };
 
 type Paged = {
@@ -52,11 +60,11 @@ type Paged = {
 };
 
 const SORT_OPTIONS = [
-  { value: "buffett_desc", label: "巴菲特分 ↓（默认）" },
+  { value: "buffett_desc", label: "巴菲特分 ↓" },
   { value: "buffett_asc", label: "巴菲特分 ↑" },
   { value: "graham_desc", label: "格雷厄姆分 ↓" },
   { value: "graham_asc", label: "格雷厄姆分 ↑" },
-  { value: "combined_desc", label: "综合分 ↓（双维 B+G+门槛）" },
+  { value: "combined_desc", label: "综合分 ↓（双维 B+G+门槛，默认）" },
   { value: "combined_asc", label: "综合分 ↑" },
   { value: "third_lens_desc", label: "第三套分 ↓" },
   { value: "third_lens_asc", label: "第三套分 ↑" },
@@ -64,23 +72,77 @@ const SORT_OPTIONS = [
   { value: "triple_asc", label: "三元综合 ↑" },
   { value: "industry_desc", label: "行业 ↓" },
   { value: "industry_asc", label: "行业 ↑" },
+  { value: "ai_score_desc", label: "AI 一致性分 ↓（持久化）" },
+  { value: "ai_score_asc", label: "AI 一致性分 ↑（持久化）" },
+  { value: "market_cap_desc", label: "市值 ↓" },
+  { value: "market_cap_asc", label: "市值 ↑" },
+  { value: "dividend_yield_desc", label: "股息率 ↓" },
+  { value: "dividend_yield_asc", label: "股息率 ↑" },
 ];
 
 const EMPTY = "—";
+
+function formatMarketCapYuan(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v) || v <= 0) {
+    return EMPTY;
+  }
+  const yi = v / 1e8;
+  if (yi >= 0.01) {
+    return `${yi.toFixed(2)} 亿`;
+  }
+  const wan = v / 1e4;
+  if (wan >= 1) {
+    return `${wan.toFixed(2)} 万`;
+  }
+  return `${Math.round(v)} 元`;
+}
+
+function formatDividendYieldPreferred(
+  dvTtm: number | null | undefined,
+  dvRatio: number | null | undefined,
+): string {
+  const pick = (x: number | null | undefined) =>
+    x !== null && x !== undefined && Number.isFinite(x) ? x : null;
+  const chosen = pick(dvTtm) ?? pick(dvRatio);
+  if (chosen === null) {
+    return EMPTY;
+  }
+  return `${chosen.toFixed(2)}%`;
+}
 
 /** 与后端 INDUSTRY_EMPTY_QUERY_VALUE 一致 */
 const INDUSTRY_EMPTY = "__EMPTY__";
 
 function parseSortKey(combo: string): {
-  sort: "buffett" | "graham" | "combined" | "industry" | "third_lens" | "triple";
+  sort:
+    | "buffett"
+    | "graham"
+    | "combined"
+    | "industry"
+    | "third_lens"
+    | "triple"
+    | "ai_score"
+    | "market_cap"
+    | "dividend_yield";
   order: "asc" | "desc";
 } {
-  const m = combo.match(/^(buffett|graham|combined|industry|third_lens|triple)_(asc|desc)$/);
+  const m = combo.match(
+    /^(buffett|graham|combined|industry|third_lens|triple|ai_score|market_cap|dividend_yield)_(asc|desc)$/,
+  );
   if (!m) {
-    return { sort: "buffett", order: "desc" };
+    return { sort: "combined", order: "desc" };
   }
   return {
-    sort: m[1] as "buffett" | "graham" | "combined" | "industry" | "third_lens" | "triple",
+    sort: m[1] as
+      | "buffett"
+      | "graham"
+      | "combined"
+      | "industry"
+      | "third_lens"
+      | "triple"
+      | "ai_score"
+      | "market_cap"
+      | "dividend_yield",
     order: m[2] as "asc" | "desc",
   };
 }
@@ -104,9 +166,10 @@ function formatRunLabel(r: RunItem): string {
 }
 
 export default function ScreeningListPage() {
+  const [searchParams] = useSearchParams();
   const [runs, setRuns] = useState<RunItem[]>([]);
   const [runId, setRunId] = useState<number | null>(null);
-  const [sortCombo, setSortCombo] = useState("buffett_desc");
+  const [sortCombo, setSortCombo] = useState("combined_desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [data, setData] = useState<Paged | null>(null);
@@ -116,6 +179,14 @@ export default function ScreeningListPage() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
   const [industryOptions, setIndustryOptions] = useState<{ value: string; label: string }[]>([]);
+  const [hasAiOnly, setHasAiOnly] = useState(false);
+  const [aiScoreMin, setAiScoreMin] = useState<number | null>(null);
+  const [companyNameQ, setCompanyNameQ] = useState("");
+  /** 亿元，提交时换算为后端「元」 */
+  const [marketCapMinYi, setMarketCapMinYi] = useState<number | null>(null);
+  const [marketCapMaxYi, setMarketCapMaxYi] = useState<number | null>(null);
+  const [divYieldMin, setDivYieldMin] = useState<number | null>(null);
+  const [divYieldMax, setDivYieldMax] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadRuns = useCallback(async () => {
@@ -149,6 +220,28 @@ export default function ScreeningListPage() {
       for (const ind of selectedIndustries) {
         q.append("industry", ind);
       }
+      if (hasAiOnly) {
+        q.set("has_ai_analysis", "true");
+      }
+      if (aiScoreMin !== null && Number.isFinite(aiScoreMin)) {
+        q.set("ai_score_min", String(aiScoreMin));
+      }
+      const cn = companyNameQ.trim();
+      if (cn) {
+        q.set("company_name", cn);
+      }
+      if (marketCapMinYi !== null && Number.isFinite(marketCapMinYi) && marketCapMinYi >= 0) {
+        q.set("market_cap_min", String(marketCapMinYi * 1e8));
+      }
+      if (marketCapMaxYi !== null && Number.isFinite(marketCapMaxYi) && marketCapMaxYi >= 0) {
+        q.set("market_cap_max", String(marketCapMaxYi * 1e8));
+      }
+      if (divYieldMin !== null && Number.isFinite(divYieldMin) && divYieldMin >= 0) {
+        q.set("dividend_yield_min", String(divYieldMin));
+      }
+      if (divYieldMax !== null && Number.isFinite(divYieldMax) && divYieldMax >= 0) {
+        q.set("dividend_yield_max", String(divYieldMax));
+      }
       const res = await fetch(`/api/v1/runs/${runId}/results?${q.toString()}`);
       if (!res.ok) {
         throw new Error(await res.text());
@@ -159,7 +252,21 @@ export default function ScreeningListPage() {
     } finally {
       setLoading(false);
     }
-  }, [runId, page, pageSize, sort, order, selectedIndustries]);
+  }, [
+    runId,
+    page,
+    pageSize,
+    sort,
+    order,
+    selectedIndustries,
+    hasAiOnly,
+    aiScoreMin,
+    companyNameQ,
+    marketCapMinYi,
+    marketCapMaxYi,
+    divYieldMin,
+    divYieldMax,
+  ]);
 
   const loadIndustryFacets = useCallback(async () => {
     if (runId === null) {
@@ -257,6 +364,19 @@ export default function ScreeningListPage() {
   }, [loadRuns]);
 
   useEffect(() => {
+    const raw = searchParams.get("runId");
+    if (!raw) {
+      return;
+    }
+    const n = parseInt(raw, 10);
+    if (!Number.isNaN(n) && n > 0) {
+      setRunId(n);
+      setPage(1);
+      setSelectedIndustries([]);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     void loadIndustryFacets();
   }, [loadIndustryFacets]);
 
@@ -276,12 +396,11 @@ export default function ScreeningListPage() {
         ellipsis: true,
         render: (_: string, row) => {
           const label = row.display_name ? row.display_name : EMPTY;
-          if (runId === null) {
+          const rid = row.ai_run_id ?? runId;
+          if (rid === null) {
             return label;
           }
-          return (
-            <Link to={`/runs/${runId}/companies/${encodeURIComponent(row.symbol)}`}>{label}</Link>
-          );
+          return <Link to={`/runs/${rid}/companies/${encodeURIComponent(row.symbol)}`}>{label}</Link>;
         },
       },
       {
@@ -295,13 +414,25 @@ export default function ScreeningListPage() {
         },
       },
       {
-        title: "巴菲特分",
+        title: "市值（批跑时点）",
+        dataIndex: "market_cap",
+        width: 120,
+        render: (_: number | null | undefined, row) => formatMarketCapYuan(row.market_cap),
+      },
+      {
+        title: "股息率％",
+        key: "dividend_yield",
+        width: 100,
+        render: (_: unknown, row) => formatDividendYieldPreferred(row.dv_ttm, row.dv_ratio),
+      },
+      {
+        title: "巴菲特分（规则）",
         dataIndex: "buffett_score",
         width: 96,
         render: (v: number) => v.toFixed(2),
       },
       {
-        title: "格雷厄姆分",
+        title: "格雷厄姆分（规则）",
         dataIndex: "graham_score",
         width: 104,
         render: (v: number) => v.toFixed(2),
@@ -326,6 +457,26 @@ export default function ScreeningListPage() {
         width: 96,
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
+      },
+      {
+        title: "AI 一致性分",
+        dataIndex: "ai_score",
+        width: 102,
+        render: (v: number | null | undefined) =>
+          v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
+      },
+      {
+        title: "机会倾向分",
+        dataIndex: "opportunity_score",
+        width: 96,
+        render: (v: number | null | undefined) =>
+          v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
+      },
+      {
+        title: "AI 分析日",
+        dataIndex: "ai_analysis_date",
+        width: 110,
+        render: (v: string | null | undefined) => (v ? String(v) : EMPTY),
       },
       {
         title: "数据覆盖",
@@ -372,70 +523,178 @@ export default function ScreeningListPage() {
   const selectedRun = runs.find((r) => r.id === runId);
 
   return (
-    <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
+    <div>
+      <Typography.Title level={3} className="vs-page-heading">
         双视角筛选结果
       </Typography.Title>
-      <Card>
-        <Space wrap style={{ marginBottom: 16 }} align="center">
-          <Typography.Text type="secondary">TuShare 优先，失败整批切 AkShare；批跑为异步 202</Typography.Text>
-          <span>上限（空=全市场）：</span>
-          <InputNumber
-            min={1}
-            max={10000}
-            placeholder="全市场"
-            value={batchMax ?? undefined}
-            onChange={(v) => setBatchMax(v === null || v === undefined ? null : v)}
-          />
-          <Button type="primary" loading={batchLoading} onClick={() => void runBatchScreen()}>
-            一键拉数并入库
-          </Button>
-        </Space>
-        <Space wrap style={{ marginBottom: 16 }}>
-          <span>选择 Run：</span>
-          <Select
-            style={{ minWidth: 420 }}
-            value={runId ?? undefined}
-            placeholder="请选择 screening_run"
-            options={runs.map((r) => ({
-              value: r.id,
-              label: formatRunLabel(r),
-            }))}
-            onChange={(v) => {
-              setRunId(v);
-              setPage(1);
-              setSelectedIndustries([]);
-            }}
-          />
-          <span>行业筛选：</span>
-          <Select
-            mode="multiple"
-            allowClear
-            placeholder="不筛选"
-            style={{ minWidth: 240 }}
-            value={selectedIndustries}
-            options={industryOptions}
-            maxTagCount="responsive"
-            onChange={(v) => {
-              setSelectedIndustries(v);
-              setPage(1);
-            }}
-          />
-          <span>排序：</span>
-          <Select
-            style={{ minWidth: 220 }}
-            value={sortCombo}
-            options={SORT_OPTIONS}
-            onChange={(v) => {
-              setSortCombo(v);
-              setPage(1);
-            }}
-          />
-        </Space>
+      <Typography.Paragraph type="secondary" className="vs-page-lead">
+        选择 Run 与筛选条件；分页、排序均由服务端计算并返回。
+      </Typography.Paragraph>
+      <Card className="vs-surface-card">
+        <div className="vs-toolbar-block">
+          <div className="vs-toolbar-title">批量拉取</div>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 14, maxWidth: 560 }}>
+            TuShare 优先，失败整批切换 AkShare。提交后为异步任务（HTTP 202），完成后在此选择对应 Run。
+          </Typography.Paragraph>
+          <Space wrap size="middle" align="center">
+            <InputNumber
+              min={1}
+              max={10000}
+              placeholder="上限（空=全市场）"
+              style={{ width: 168 }}
+              value={batchMax ?? undefined}
+              onChange={(v) => setBatchMax(v === null || v === undefined ? null : v)}
+            />
+            <Button type="primary" size="large" loading={batchLoading} onClick={() => void runBatchScreen()}>
+              一键拉数并入库
+            </Button>
+          </Space>
+        </div>
+        <div className="vs-filter-stack">
+          <div className="vs-filter-row">
+            <div className="vs-filter-label">当前 Run</div>
+            <div className="vs-filter-controls">
+              <Select
+                style={{ minWidth: 360, maxWidth: "100%", flex: "1 1 360px" }}
+                value={runId ?? undefined}
+                placeholder="请选择 screening_run"
+                options={runs.map((r) => ({
+                  value: r.id,
+                  label: formatRunLabel(r),
+                }))}
+                onChange={(v) => {
+                  setRunId(v);
+                  setPage(1);
+                  setSelectedIndustries([]);
+                  setCompanyNameQ("");
+                  setMarketCapMinYi(null);
+                  setMarketCapMaxYi(null);
+                  setDivYieldMin(null);
+                  setDivYieldMax(null);
+                }}
+              />
+            </div>
+          </div>
+          <div className="vs-filter-row">
+            <div className="vs-filter-label">行业</div>
+            <div className="vs-filter-controls">
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="不筛选"
+                style={{ minWidth: 260, maxWidth: "100%", flex: "1 1 260px" }}
+                value={selectedIndustries}
+                options={industryOptions}
+                maxTagCount="responsive"
+                onChange={(v) => {
+                  setSelectedIndustries(v);
+                  setPage(1);
+                }}
+              />
+            </div>
+          </div>
+          <div className="vs-filter-row">
+            <div className="vs-filter-label">公司名称</div>
+            <div className="vs-filter-controls">
+              <Input
+                allowClear
+                placeholder="简称、全称或代码，模糊匹配"
+                style={{ minWidth: 220, maxWidth: "100%", flex: "1 1 220px" }}
+                value={companyNameQ}
+                maxLength={128}
+                onChange={(e) => {
+                  setCompanyNameQ(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+          </div>
+          <div className="vs-filter-row">
+            <div className="vs-filter-label">市值 / 股息</div>
+            <div className="vs-filter-controls">
+              <InputNumber
+                min={0}
+                placeholder="市值下限(亿)"
+                style={{ width: 132 }}
+                value={marketCapMinYi ?? undefined}
+                onChange={(v) => {
+                  setMarketCapMinYi(v === null || v === undefined ? null : v);
+                  setPage(1);
+                }}
+              />
+              <InputNumber
+                min={0}
+                placeholder="市值上限(亿)"
+                style={{ width: 132 }}
+                value={marketCapMaxYi ?? undefined}
+                onChange={(v) => {
+                  setMarketCapMaxYi(v === null || v === undefined ? null : v);
+                  setPage(1);
+                }}
+              />
+              <InputNumber
+                min={0}
+                max={100}
+                placeholder="股息率下限(%)"
+                style={{ width: 148 }}
+                value={divYieldMin ?? undefined}
+                onChange={(v) => {
+                  setDivYieldMin(v === null || v === undefined ? null : v);
+                  setPage(1);
+                }}
+              />
+              <InputNumber
+                min={0}
+                max={100}
+                placeholder="股息率上限(%)"
+                style={{ width: 148 }}
+                value={divYieldMax ?? undefined}
+                onChange={(v) => {
+                  setDivYieldMax(v === null || v === undefined ? null : v);
+                  setPage(1);
+                }}
+              />
+            </div>
+          </div>
+          <div className="vs-filter-row">
+            <div className="vs-filter-label">AI 与排序</div>
+            <div className="vs-filter-controls">
+              <Checkbox
+                checked={hasAiOnly}
+                onChange={(e) => {
+                  setHasAiOnly(e.target.checked);
+                  setPage(1);
+                }}
+              >
+                仅已有 AI 分析
+              </Checkbox>
+              <InputNumber
+                min={0}
+                max={100}
+                placeholder="最低 AI 分"
+                style={{ width: 128 }}
+                value={aiScoreMin ?? undefined}
+                onChange={(v) => {
+                  setAiScoreMin(v === null || v === undefined ? null : v);
+                  setPage(1);
+                }}
+              />
+              <Select
+                style={{ minWidth: 240 }}
+                value={sortCombo}
+                options={SORT_OPTIONS}
+                onChange={(v) => {
+                  setSortCombo(v);
+                  setPage(1);
+                }}
+              />
+            </div>
+          </div>
+        </div>
         {selectedRun?.status === "running" && (
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 20 }}>
             <Typography.Paragraph type="warning" style={{ marginBottom: 8 }}>
-              当前 Run 仍在后台执行，结果表可能暂时为空；列表将每 2 秒自动刷新。
+              后台任务进行中：已算分标的会按批写入数据库并出现在下方表格；进度条含「拉数」阶段时，行数可能暂时少于已处理只数。列表每 2 秒自动刷新。
             </Typography.Paragraph>
             {selectedRun.progress_total != null && selectedRun.progress_total > 0 ? (
               <Progress
@@ -453,12 +712,14 @@ export default function ScreeningListPage() {
           </div>
         )}
         <Table<PagedItem>
+          className="vs-data-table"
+          bordered={false}
           rowKey="symbol"
           loading={loading}
           columns={columns}
           dataSource={data?.items ?? []}
           pagination={pagination}
-          scroll={{ x: 1380 }}
+          scroll={{ x: 1680 }}
         />
       </Card>
     </div>

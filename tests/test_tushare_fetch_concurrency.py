@@ -4,7 +4,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from value_screener.domain.snapshot import StockFinancialSnapshot
-from value_screener.infrastructure.tushare_provider import TushareAShareProvider
+from value_screener.infrastructure.tushare_provider import (
+    TushareAShareProvider,
+    _DailyBasicMaps,
+)
 
 
 def _snap(ts_code: str, trade_date: str) -> StockFinancialSnapshot:
@@ -32,12 +35,13 @@ class TushareFetchConcurrencyTest(unittest.TestCase):
         symbols = ["000001.SZ", "000002.SZ", "000003.SZ", "000004.SZ"]
         mv = {s: 100.0 for s in symbols}
 
-        def fetch_one(self, ts_code: str, trade_date: str, mv_wan: dict) -> StockFinancialSnapshot:
-            del self, mv_wan
+        def fetch_one(self, ts_code: str, trade_date: str, daily_maps: object) -> StockFinancialSnapshot:
+            del self, daily_maps
             return _snap(ts_code, trade_date)
 
+        daily = _DailyBasicMaps(mv_wan=mv, dv_ratio={}, dv_ttm={}, spot_dv_pct={})
         with patch.object(TushareAShareProvider, "_latest_open_trade_date", return_value="20260401"), patch.object(
-            TushareAShareProvider, "_load_total_mv_map", return_value=mv
+            TushareAShareProvider, "_load_daily_basic_maps", return_value=daily
         ), patch.object(TushareAShareProvider, "_fetch_one", fetch_one):
             seq = self._provider(max_workers=1)
             par = self._provider(max_workers=4)
@@ -55,15 +59,16 @@ class TushareFetchConcurrencyTest(unittest.TestCase):
         mv = {"000001.SZ": 100.0}
         calls = {"n": 0}
 
-        def fetch_one(self, ts_code: str, trade_date: str, mv_wan: dict) -> StockFinancialSnapshot:
-            del self, mv_wan
+        def fetch_one(self, ts_code: str, trade_date: str, daily_maps: object) -> StockFinancialSnapshot:
+            del self, daily_maps
             calls["n"] += 1
             if calls["n"] == 1:
                 raise ConnectionError("transient")
             return _snap(ts_code, trade_date)
 
+        daily = _DailyBasicMaps(mv_wan=mv, dv_ratio={}, dv_ttm={}, spot_dv_pct={})
         with patch.object(TushareAShareProvider, "_latest_open_trade_date", return_value="20260401"), patch.object(
-            TushareAShareProvider, "_load_total_mv_map", return_value=mv
+            TushareAShareProvider, "_load_daily_basic_maps", return_value=daily
         ), patch.object(TushareAShareProvider, "_fetch_one", fetch_one):
             p = TushareAShareProvider(
                 "test-token",

@@ -14,15 +14,18 @@ from value_screener.application.batch_screening_service import (
     BatchScreeningResult,
 )
 from value_screener.application.persist_screening_run import (
+    append_screening_results_chunk,
     mark_screening_run_failed,
     persist_batch_screening,
     persist_batch_screening_for_run,
 )
+from value_screener.application.post_full_batch_pipeline import run_post_full_batch_pipeline
 from value_screener.application.screening_service import ScreeningApplicationService
 from value_screener.infrastructure.app_db import get_engine
+from value_screener.domain.snapshot import StockFinancialSnapshot
 from value_screener.infrastructure.factory import build_composite_provider
 from value_screener.infrastructure.screening_repository import ScreeningRepository
-from value_screener.infrastructure.settings import AShareIngestionSettings
+from value_screener.infrastructure.settings import AShareIngestionSettings, PostFullBatchPipelineSettings
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,16 @@ def _build_throttled_progress_sink(
     return sink
 
 
+def run_post_full_batch_pipeline_background(run_id: int) -> None:
+    """供 FastAPI BackgroundTasks 调用：第三套/三元与综合 Top N 的 DCF+AI。"""
+
+    try:
+        engine = get_engine()
+        run_post_full_batch_pipeline(engine, run_id, PostFullBatchPipelineSettings.from_env())
+    except Exception:
+        logger.exception("后置流水线未捕获异常 run_id=%s", run_id)
+
+
 def execute_batch_screen(
     *,
     max_symbols: int | None,
@@ -105,6 +118,10 @@ def execute_batch_screen(
         tushare_max_workers=base.tushare_max_workers,
         tushare_max_retries=base.tushare_max_retries,
         tushare_retry_backoff_seconds=base.tushare_retry_backoff_seconds,
+        tushare_max_calls_per_minute=base.tushare_max_calls_per_minute,
+        tushare_rpm_headroom=base.tushare_rpm_headroom,
+        fs_sync_schedule_tz=base.fs_sync_schedule_tz,
+        batch_screen_persist_chunk_size=base.batch_screen_persist_chunk_size,
     )
     provider = build_composite_provider(settings)
     batch_svc = BatchScreeningApplicationService(provider, ScreeningApplicationService())
@@ -131,12 +148,38 @@ def run_batch_screen_background(run_id: int, max_symbols: int | None) -> None:
     try:
         engine = get_engine()
         progress_sink = _build_throttled_progress_sink(engine, run_id)
-        result, _ = execute_batch_screen(
-            max_symbols=max_symbols,
-            symbols=None,
+        base = AShareIngestionSettings.from_env()
+        settings = AShareIngestionSettings(
+            tushare_token=base.tushare_token,
             primary_backend="tushare",
-            persist=False,
+            max_symbols=base.max_symbols,
+            request_sleep_seconds=base.request_sleep_seconds,
+            tushare_max_workers=base.tushare_max_workers,
+            tushare_max_retries=base.tushare_max_retries,
+            tushare_retry_backoff_seconds=base.tushare_retry_backoff_seconds,
+            tushare_max_calls_per_minute=base.tushare_max_calls_per_minute,
+            tushare_rpm_headroom=base.tushare_rpm_headroom,
+            fs_sync_schedule_tz=base.fs_sync_schedule_tz,
+            batch_screen_persist_chunk_size=base.batch_screen_persist_chunk_size,
+        )
+        chunk_sz = settings.batch_screen_persist_chunk_size
+        incremental = chunk_sz > 0
+
+        provider = build_composite_provider(settings)
+        batch_svc = BatchScreeningApplicationService(provider, ScreeningApplicationService())
+
+        def on_chunk(
+            screened: list[dict[str, Any]],
+            snaps_chunk: list[StockFinancialSnapshot],
+        ) -> None:
+            append_screening_results_chunk(engine, run_id, screened, snaps_chunk)
+
+        result = batch_svc.run(
+            symbols=None,
+            max_symbols=max_symbols,
             on_batch_progress=progress_sink,
+            chunk_size=chunk_sz if incremental else None,
+            on_chunk_screened=on_chunk if incremental else None,
         )
         prov = result.meta.get("provider")
         persist_batch_screening_for_run(
@@ -144,6 +187,7 @@ def run_batch_screen_background(run_id: int, max_symbols: int | None) -> None:
             run_id,
             result,
             provider_label=str(prov) if prov else None,
+            results_already_persisted=incremental,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("异步 batch-screen run_id=%s 失败", run_id)

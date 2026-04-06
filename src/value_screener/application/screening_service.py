@@ -19,15 +19,20 @@ class ScreeningApplicationService:
         for snap in items:
             g = self._graham.assess(snap)
             b = self._buffett.assess(snap)
+            prov: dict[str, object] = {
+                "data_source": snap.data_source,
+                "trade_cal_date": snap.trade_cal_date,
+                "financials_end_date": snap.financials_end_date,
+                "market_cap": float(snap.market_cap),
+            }
+            if snap.dv_ratio is not None:
+                prov["dv_ratio"] = float(snap.dv_ratio)
+            if snap.dv_ttm is not None:
+                prov["dv_ttm"] = float(snap.dv_ttm)
             results.append(
                 {
                     "symbol": snap.symbol,
-                    "provenance": {
-                        "data_source": snap.data_source,
-                        "trade_cal_date": snap.trade_cal_date,
-                        "financials_end_date": snap.financials_end_date,
-                        "market_cap": float(snap.market_cap),
-                    },
+                    "provenance": prov,
                     "graham": asdict(g),
                     "buffett": asdict(b),
                 }
