@@ -1,3 +1,14 @@
+"""
+TuShare Pro 快照与全市场拉数。
+
+财报字段名以官网为准（https://tushare.pro/document/2）：
+- balancesheet doc_id=36：total_cur_assets、total_cur_liab、total_liab、st_borr、lt_borr、total_hldr_eqy_exc_min_int 等；
+- income doc_id=33：n_income_attr_p、total_revenue、revenue；
+- cashflow doc_id=44：n_cashflow_act、n_cashflow_inv_act（投资活动）、n_cash_flows_fnc_act（筹资活动）；
+- daily_basic doc_id=32：total_mv（万元）、total_share（万股）、dv_ratio、dv_ttm。
+市值换算：total_mv * 1e4 → 元（见 _fetch_one）。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -20,11 +31,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# daily_basic 与 trade_cal 可能不同步：日历已为开市日时接口仍可能无当日数据，向前回溯若干会话。
+_DAILY_BASIC_SESSION_LOOKBACK = 60
+
 _TUSHARE_SKIP_EM_DIVIDEND_ENV = "VALUE_SCREENER_TUSHARE_SKIP_EM_DIVIDEND"
+_TUSHARE_USE_EM_DIVIDEND_ENV = "VALUE_SCREENER_TUSHARE_USE_EM_DIVIDEND"
 
 
 def _em_dividend_supplement_map() -> dict[str, float | None]:
+    """
+    东财现货全表补 dv_ttm（仅当 TuShare daily_basic 的 dv_ttm 为空时生效）。
+
+    默认关闭：股息率仅用 TuShare daily_basic 的 dv_ratio / dv_ttm（见 doc_id=32），
+    避免依赖 AkShare 拉东财时网络不稳、反爬断开（RemoteDisconnected）等噪音日志。
+
+    显式设置 VALUE_SCREENER_TUSHARE_USE_EM_DIVIDEND=1 时尝试东财补全；
+    VALUE_SCREENER_TUSHARE_SKIP_EM_DIVIDEND=1 时强制不补（优先于上一项）。
+    """
+
     if os.environ.get(_TUSHARE_SKIP_EM_DIVIDEND_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
+        return {}
+    if os.environ.get(_TUSHARE_USE_EM_DIVIDEND_ENV, "").strip().lower() not in ("1", "true", "yes", "on"):
         return {}
     return em_spot_dividend_yield_percent_map()
 
@@ -32,7 +59,7 @@ def _em_dividend_supplement_map() -> dict[str, float | None]:
 class _DailyBasicMaps(NamedTuple):
     """
     同一 trade_date 的 daily_basic 批量字段，按 ts_code 索引。
-    spot_dv_pct：东财现货股息率（%%），补 TuShare dv 字段对大量标的为空的问题。
+    spot_dv_pct：可选，东财现货股息率（%%），仅 VALUE_SCREENER_TUSHARE_USE_EM_DIVIDEND=1 时填充。
     """
 
     mv_wan: dict[str, float]
@@ -103,8 +130,7 @@ class TushareAShareProvider:
         on_progress: FetchSnapshotProgressCallback | None = None,
     ) -> list[StockFinancialSnapshot | SymbolFetchFailure]:
         ts_codes = [to_ts_code(s) for s in symbols]
-        trade_date = self._latest_open_trade_date()
-        daily_maps = self._load_daily_basic_maps(trade_date)
+        trade_date, daily_maps = self._resolve_effective_daily_basic_session()
         daily_maps = daily_maps._replace(spot_dv_pct=_em_dividend_supplement_map())
         total = len(ts_codes)
         if total == 0:
@@ -219,10 +245,15 @@ class TushareAShareProvider:
                 time.sleep(delay)
         raise last_exc  # pragma: no cover
 
-    def _latest_open_trade_date(self) -> str:
+    def _open_trade_dates_descending(self, *, max_sessions: int = _DAILY_BASIC_SESSION_LOOKBACK) -> list[str]:
+        """SSE 开市日列表，新→旧，长度上限为 max_sessions。"""
         from datetime import datetime
 
+        cap = max(1, min(int(max_sessions), 366))
         end = datetime.now().strftime("%Y%m%d")
+        limiter = getattr(self, "_rate_limiter", None)
+        if limiter is not None:
+            limiter.acquire()
         cal = self._api().trade_cal(exchange="SSE", start_date="20200101", end_date=end, is_open="1")
         if cal is None or cal.empty:
             raise RuntimeError("trade_cal 为空，无法确定最近交易日")
@@ -232,17 +263,42 @@ class TushareAShareProvider:
         open_days = cal.loc[open_mask, "cal_date"].astype(str).tolist()
         if not open_days:
             raise RuntimeError("无开市日")
-        return max(open_days)
+        ordered = sorted(open_days, reverse=True)
+        return ordered[:cap]
 
-    def _load_daily_basic_maps(self, trade_date: str) -> _DailyBasicMaps:
+    def _latest_open_trade_date(self) -> str:
+        return self._open_trade_dates_descending(max_sessions=1)[0]
+
+    def _resolve_effective_daily_basic_session(self) -> tuple[str, _DailyBasicMaps]:
+        """在最近开市日中选取首个 daily_basic 已有数据的交易日。"""
+        candidates = self._open_trade_dates_descending()
+        latest = candidates[0] if candidates else ""
+        for td in candidates:
+            maps = self._try_load_daily_basic_maps(td)
+            if maps is not None:
+                if latest and td != latest:
+                    logger.warning(
+                        "daily_basic 在最新开市日暂无数据，已使用交易日 %s（通常为盘前/数据未落库）",
+                        td,
+                    )
+                return td, maps
+        raise RuntimeError(
+            f"daily_basic 在最近 {_DAILY_BASIC_SESSION_LOOKBACK} 个开市日均无数据，请稍后重试或检查 TuShare 权限与额度",
+        )
+
+    def _try_load_daily_basic_maps(self, trade_date: str) -> _DailyBasicMaps | None:
         time.sleep(self._sleep)
         db = self._api().daily_basic(
             trade_date=trade_date,
             fields="ts_code,total_mv,dv_ratio,dv_ttm",
         )
         if db is None or db.empty:
-            raise RuntimeError(f"daily_basic 在 {trade_date} 无数据")
+            logger.debug("daily_basic 空: trade_date=%s", trade_date)
+            return None
         db = db.dropna(subset=["total_mv"])
+        if db.empty:
+            logger.debug("daily_basic 无有效 total_mv: trade_date=%s", trade_date)
+            return None
         ts_series = db["ts_code"].astype(str)
         mv_wan = dict(zip(ts_series, db["total_mv"].astype(float), strict=True))
         dv_ratio: dict[str, float | None] = {}
@@ -252,6 +308,12 @@ class TushareAShareProvider:
             dv_ratio[code] = _optional_percent_field(row.get("dv_ratio"))
             dv_ttm[code] = _optional_percent_field(row.get("dv_ttm"))
         return _DailyBasicMaps(mv_wan=mv_wan, dv_ratio=dv_ratio, dv_ttm=dv_ttm, spot_dv_pct={})
+
+    def _load_daily_basic_maps(self, trade_date: str) -> _DailyBasicMaps:
+        maps = self._try_load_daily_basic_maps(trade_date)
+        if maps is None:
+            raise RuntimeError(f"daily_basic 在 {trade_date} 无数据")
+        return maps
 
     def _fetch_one(
         self,
@@ -274,7 +336,7 @@ class TushareAShareProvider:
             ts_code=ts_code,
             fields=(
                 "ts_code,end_date,ann_date,total_cur_assets,total_cur_liab,"
-                "total_liab,total_hldr_eqy_exc_min_int,st_borrow,lt_borrow"
+                "total_liab,total_hldr_eqy_exc_min_int,st_borr,lt_borr"
             ),
             limit=1,
         )
@@ -283,10 +345,16 @@ class TushareAShareProvider:
         b0 = bs.iloc[0]
         fin_end = str(b0.get("end_date", "") or "")
 
-        inc = pro.income(ts_code=ts_code, fields="end_date,n_income_attr_p,revenue", limit=4)
-        cf = pro.cashflow(ts_code=ts_code, fields="end_date,n_cash_flow_act", limit=4)
+        inc = pro.income(
+            ts_code=ts_code,
+            fields="end_date,n_income_attr_p,total_revenue,revenue",
+            limit=4,
+        )
+        cf = pro.cashflow(ts_code=ts_code, fields="end_date,n_cashflow_act", limit=4)
         ni_ttm = _sum_last_n(inc, "n_income_attr_p", 4)
-        rev_ttm = _sum_last_n(inc, "revenue", 4)
+        rev_ttm = _sum_last_n(inc, "total_revenue", 4)
+        if rev_ttm is None:
+            rev_ttm = _sum_last_n(inc, "revenue", 4)
         ocf_col = _pick_cashflow_col(cf)
         ocf_ttm = _sum_last_n(cf, ocf_col, 4) if ocf_col else None
 
@@ -294,8 +362,12 @@ class TushareAShareProvider:
         tca = _finite_non_neg(b0.get("total_cur_assets"))
         tcl = _finite_non_neg(b0.get("total_cur_liab"))
         tl = _finite_non_neg(b0.get("total_liab"))
-        stb = _finite_non_neg(b0.get("st_borrow"))
-        ltb = _finite_non_neg(b0.get("lt_borrow"))
+        stb = _finite_non_neg(b0.get("st_borr"))
+        if stb is None:
+            stb = _finite_non_neg(b0.get("st_borrow"))
+        ltb = _finite_non_neg(b0.get("lt_borr"))
+        if ltb is None:
+            ltb = _finite_non_neg(b0.get("lt_borrow"))
         ibd = None
         if stb is not None and ltb is not None:
             ibd = stb + ltb
@@ -326,7 +398,7 @@ class TushareAShareProvider:
 def _pick_cashflow_col(df: pd.DataFrame | None) -> str | None:
     if df is None or df.empty:
         return None
-    for name in ("n_cash_flow_act", "n_cashflow_act"):
+    for name in ("n_cashflow_act", "n_cash_flow_act"):
         if name in df.columns:
             return name
     return None

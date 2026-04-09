@@ -11,6 +11,8 @@ export default function App() {
       <AppShell>
         <Routes>
           <Route path="/" element={<ScreeningListPage />} />
+          <Route path="/investment-quality" element={<Navigate to="/data-tasks" replace />} />
+          <Route path="/investment-quality-report" element={<Navigate to="/data-tasks" replace />} />
           <Route path="/data-tasks" element={<DataTasksPage />} />
           <Route path="/ai-history" element={<AiHistoryPage />} />
           <Route path="/runs/:runId/companies/:tsCode" element={<CompanyDetailPage />} />

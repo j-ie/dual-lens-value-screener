@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TTL = 120
 
 # 分页 JSON 形状变更时递增，避免 Redis 返回缺字段的旧缓存
-RESULT_CACHE_ENRICH_VER = "enrich_v8"
+RESULT_CACHE_ENRICH_VER = "enrich_v9"
 
 
 @lru_cache(maxsize=1)
@@ -57,6 +57,17 @@ def company_name_cache_fingerprint(company_name: str | None) -> str:
         return ""
     digest = hashlib.sha256(n.encode("utf-8")).hexdigest()[:16]
     return f"cn:{digest}"
+
+
+def iq_decisions_cache_fingerprint(iq_decisions: list[str] | None) -> str:
+    """价值质量结论多选筛选，用于 Redis 分页键。"""
+
+    if not iq_decisions:
+        return ""
+    parts = sorted({x.strip() for x in iq_decisions if x and str(x).strip()})
+    if not parts:
+        return ""
+    return "iq:" + "|".join(parts)
 
 
 def valuation_filters_cache_fingerprint(

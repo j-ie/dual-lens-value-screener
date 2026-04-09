@@ -90,6 +90,17 @@ def enrich_screening_result_row(row: dict[str, Any]) -> dict[str, Any]:
             except (TypeError, ValueError):
                 pass
 
+    iq = row.get("investment_quality")
+    iq_dict = iq if isinstance(iq, dict) else None
+    iq_label = iq_dict.get("decision_label_zh") if iq_dict else None
+    iq_dec = row.get("iq_decision")
+    if isinstance(iq_dec, str) and iq_dec.strip():
+        iq_decision_code = iq_dec.strip()
+    elif iq_dict and isinstance(iq_dict.get("decision"), str):
+        iq_decision_code = str(iq_dict["decision"]).strip()
+    else:
+        iq_decision_code = None
+
     return {
         "symbol": row["symbol"],
         "graham_score": row["graham_score"],
@@ -121,4 +132,7 @@ def enrich_screening_result_row(row: dict[str, Any]) -> dict[str, Any]:
         "net_income_ttm": net_income_ttm_val,
         "dv_ratio": dv_ratio_val,
         "dv_ttm": dv_ttm_val,
+        "investment_quality": iq_dict,
+        "iq_decision": iq_decision_code,
+        "iq_decision_label_zh": iq_label if isinstance(iq_label, str) else None,
     }

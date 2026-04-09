@@ -8,11 +8,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from value_screener.application.financial_statement_payload import to_float_or_none
+from value_screener.application.financial_statement_payload import (
+    merge_core_columns_with_payload,
+    to_float_or_none,
+)
 from value_screener.domain.dcf_sector_policy import DcfSectorKind
 
 # TuShare balancesheet 常见有息/类有息负债字段（不同报表模板可能仅部分有值）
 _FINANCIAL_INTEREST_FIELD_KEYS: tuple[str, ...] = (
+    "st_borr",
+    "lt_borr",
     "st_borrow",
     "lt_borrow",
     "bond_payable",
@@ -29,20 +34,9 @@ def _sort_by_end_date_desc(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def flatten_balance_row_for_dcf(row: dict[str, Any]) -> dict[str, Any]:
-    """
-    合并顶层标量列与 payload 全量字段，便于读取 TuShare 扩展科目。
+    """资产负债表行：宽表 + payload 合并（实现见 merge_core_columns_with_payload）。"""
 
-    顶层非空优先；顶层为 None 时用 payload 补全。
-    """
-
-    out = {k: v for k, v in row.items() if k != "payload"}
-    payload = row.get("payload")
-    if not isinstance(payload, dict):
-        return out
-    for key, val in payload.items():
-        if key not in out or out[key] is None:
-            out[key] = val
-    return out
+    return merge_core_columns_with_payload(row)
 
 
 def _sum_financial_interest_bearing_debt(flat: dict[str, Any]) -> tuple[float, bool]:

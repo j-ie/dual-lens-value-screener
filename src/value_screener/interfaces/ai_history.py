@@ -94,7 +94,7 @@ def _parse_iso_date(name: str, raw: str | None) -> date | None:
 def list_company_ai_analyses(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    sort: Literal["analysis_date", "ai_score", "ts_code"] = "ai_score",
+    sort: Literal["analysis_date", "ai_score", "opportunity_score", "ts_code"] = "opportunity_score",
     order: Literal["asc", "desc"] = "desc",
     analysis_date_from: str | None = Query(None, description="含首日起，YYYY-MM-DD"),
     analysis_date_to: str | None = Query(None, description="含末日止，YYYY-MM-DD"),

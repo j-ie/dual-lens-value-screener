@@ -40,8 +40,10 @@ class TushareFetchConcurrencyTest(unittest.TestCase):
             return _snap(ts_code, trade_date)
 
         daily = _DailyBasicMaps(mv_wan=mv, dv_ratio={}, dv_ttm={}, spot_dv_pct={})
-        with patch.object(TushareAShareProvider, "_latest_open_trade_date", return_value="20260401"), patch.object(
-            TushareAShareProvider, "_load_daily_basic_maps", return_value=daily
+        with patch.object(
+            TushareAShareProvider,
+            "_resolve_effective_daily_basic_session",
+            return_value=("20260401", daily),
         ), patch.object(TushareAShareProvider, "_fetch_one", fetch_one):
             seq = self._provider(max_workers=1)
             par = self._provider(max_workers=4)
@@ -67,8 +69,10 @@ class TushareFetchConcurrencyTest(unittest.TestCase):
             return _snap(ts_code, trade_date)
 
         daily = _DailyBasicMaps(mv_wan=mv, dv_ratio={}, dv_ttm={}, spot_dv_pct={})
-        with patch.object(TushareAShareProvider, "_latest_open_trade_date", return_value="20260401"), patch.object(
-            TushareAShareProvider, "_load_daily_basic_maps", return_value=daily
+        with patch.object(
+            TushareAShareProvider,
+            "_resolve_effective_daily_basic_session",
+            return_value=("20260401", daily),
         ), patch.object(TushareAShareProvider, "_fetch_one", fetch_one):
             p = TushareAShareProvider(
                 "test-token",

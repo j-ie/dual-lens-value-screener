@@ -124,7 +124,12 @@ def execute_batch_screen(
         batch_screen_persist_chunk_size=base.batch_screen_persist_chunk_size,
     )
     provider = build_composite_provider(settings)
-    batch_svc = BatchScreeningApplicationService(provider, ScreeningApplicationService())
+    engine = get_engine()
+    batch_svc = BatchScreeningApplicationService(
+        provider,
+        ScreeningApplicationService(),
+        screening_engine=engine,
+    )
     result = batch_svc.run(
         symbols=symbols,
         max_symbols=max_symbols,
@@ -132,7 +137,6 @@ def execute_batch_screen(
     )
     if not persist:
         return result, None
-    engine = get_engine()
     prov = result.meta.get("provider")
     run_id = persist_batch_screening(
         engine,
@@ -166,7 +170,11 @@ def run_batch_screen_background(run_id: int, max_symbols: int | None) -> None:
         incremental = chunk_sz > 0
 
         provider = build_composite_provider(settings)
-        batch_svc = BatchScreeningApplicationService(provider, ScreeningApplicationService())
+        batch_svc = BatchScreeningApplicationService(
+            provider,
+            ScreeningApplicationService(),
+            screening_engine=engine,
+        )
 
         def on_chunk(
             screened: list[dict[str, Any]],

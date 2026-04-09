@@ -4,7 +4,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 const { Content } = Layout;
 
-function mainSegmentFromPath(pathname: string): "screening" | "ai-history" | "data-tasks" {
+function mainSegmentFromPath(
+  pathname: string,
+): "screening" | "ai-history" | "data-tasks" {
+  if (pathname.startsWith("/investment-quality-report") || pathname.startsWith("/investment-quality")) {
+    return "data-tasks";
+  }
   if (pathname.startsWith("/ai-history")) {
     return "ai-history";
   }

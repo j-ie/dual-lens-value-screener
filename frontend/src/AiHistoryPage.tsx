@@ -140,6 +140,8 @@ const SORT_OPTIONS = [
   { value: "analysis_date_asc", label: "分析日期 ↑" },
   { value: "ai_score_desc", label: "一致性分 ↓" },
   { value: "ai_score_asc", label: "一致性分 ↑" },
+  { value: "opportunity_score_desc", label: "机会倾向 ↓" },
+  { value: "opportunity_score_asc", label: "机会倾向 ↑" },
   { value: "ts_code_desc", label: "代码 ↓" },
   { value: "ts_code_asc", label: "代码 ↑" },
 ];
@@ -148,9 +150,9 @@ const EMPTY = "—";
 const INDUSTRY_EMPTY = "__EMPTY__";
 
 function parseSortCombo(combo: string): { sort: string; order: "asc" | "desc" } {
-  const m = combo.match(/^(analysis_date|ai_score|ts_code)_(asc|desc)$/);
+  const m = combo.match(/^(analysis_date|ai_score|opportunity_score|ts_code)_(asc|desc)$/);
   if (!m) {
-    return { sort: "ai_score", order: "desc" };
+    return { sort: "opportunity_score", order: "desc" };
   }
   return { sort: m[1], order: m[2] as "asc" | "desc" };
 }
@@ -158,7 +160,7 @@ function parseSortCombo(combo: string): { sort: string; order: "asc" | "desc" } 
 export default function AiHistoryPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [sortCombo, setSortCombo] = useState("ai_score_desc");
+  const [sortCombo, setSortCombo] = useState("opportunity_score_desc");
   const [data, setData] = useState<Paged | null>(null);
   const [loading, setLoading] = useState(false);
   const [dateFrom, setDateFrom] = useState("");

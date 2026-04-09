@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.engine import Engine
 
 from value_screener.application.company_detail_query import CompanyDetailQueryService
+from value_screener.application.investment_quality_run_context import (
+    compute_investment_quality_for_run_symbol,
+)
 from value_screener.domain.company_ai_dcf_snapshot import dcf_snapshot_for_persistence
 from value_screener.infrastructure.ai_analysis_cache import (
     ai_analysis_cache_key,
@@ -22,7 +25,7 @@ from value_screener.infrastructure.settings import CompanyAiAnalysisSettings
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "v4"
+PROMPT_VERSION = "v5"
 
 _SYSTEM_PROMPT_ZH = """你是一位资深财务分析师与投资顾问（教学/信息用途）。用户将提供一段 JSON，
 其中包含某次股票筛选批跑的冻结快照 run_snapshot、公司主数据 reference、三大报表摘要 financials、
@@ -39,7 +42,8 @@ _SYSTEM_PROMPT_ZH = """你是一位资深财务分析师与投资顾问（教学
 8. 若某项指标在 JSON 中缺失或未披露，须明确写「提供数据中未包含该项」，不得推测具体数字。
    若 run_snapshot 中已出现 `pe_ttm`、`net_income_ttm`、`market_cap` 等键且值为数字，则视为已提供，可引用并说明其为批跑冻结时点口径（非实时行情）。
 9. 输出须客观，避免「必涨」「稳赚」「必买」等承诺式表述。
-10. 回答面向专业投资者教育场景，不构成任何投资建议。"""
+10. 回答面向专业投资者教育场景，不构成任何投资建议。
+11. 若 JSON 含 `investment_quality`：其为系统规则引擎输出的结构化价值判断（含结论、模块分、风险标记等），**非**大模型生成；你必须在摘要、`investment_quality_commentary`、与规则筛分对照及完整叙述中显式讨论该块与 Buffett/Graham/第三套/三元等分数的关系或张力，不得编造该块中未出现的字段或数值。若不含该键或值为 null，则写明「本次上下文未提供规则化价值判断数据」。"""
 
 
 class CompanyAiDetailError(Exception):
@@ -109,9 +113,13 @@ class LlmCompanyAnalysisSchema(BaseModel):
     key_metrics_commentary: str = Field(description="结合提供数据对关键财务与估值相关信息的评论，勿编造数字")
     risks: str = Field(description="主要风险与不确定性（基于已给信息）")
     alignment_with_scores: str = Field(
-        description="筛分分数、dcf（若有且成功）与基本面叙述的对照；须说明与 Buffett/Graham/第三套/三元等的关系"
+        description="筛分分数、investment_quality（若有）、dcf（若有且成功）与基本面叙述的对照；须说明与 Buffett/Graham/第三套/三元等的关系"
     )
-    narrative_markdown: str = Field(description="完整叙述，可使用 Markdown 小标题与列表")
+    investment_quality_commentary: str = Field(
+        default="",
+        description="若上下文含 investment_quality：3～8 句中文解读规则结论、模块分与风险提示，并点出与行业/周期口径的衔接；不含则写未提供",
+    )
+    narrative_markdown: str = Field(description="完整叙述，可使用 Markdown 小标题与列表（勿重复粘贴 investment_quality 全文 JSON）")
     ai_score: float = Field(
         description="0～100，仅信息完整度与规则分/DCF/叙述一致性，非便宜度或买卖建议",
     )
@@ -128,10 +136,11 @@ def _canonical_context_json(context: dict[str, Any]) -> str:
 
 def build_analysis_context(detail: dict[str, Any]) -> dict[str, Any]:
     """与详情 API 同源字段，附加混源说明，供模型与哈希使用。"""
-    return {
+    ctx: dict[str, Any] = {
         "data_mixing_note_zh": (
             "run_snapshot 来自该次 screening 批跑冻结结果；live_quote 为请求时刻附近独立拉取的行情，"
-            "二者时间戳可能不一致。dcf 为可选简化估值块。禁止编造上下文中未出现的数值。"
+            "二者时间戳可能不一致。dcf 为可选简化估值块。investment_quality 为同次 run 下规则引擎价值判断（若提供）。"
+            "禁止编造上下文中未出现的数值。"
         ),
         "run": detail.get("run"),
         "run_snapshot": detail.get("run_snapshot"),
@@ -140,6 +149,9 @@ def build_analysis_context(detail: dict[str, Any]) -> dict[str, Any]:
         "live_quote": detail.get("live_quote"),
         "dcf": detail.get("dcf"),
     }
+    if "investment_quality" in detail:
+        ctx["investment_quality"] = detail.get("investment_quality")
+    return ctx
 
 
 def context_hash_for(context: dict[str, Any]) -> str:
@@ -213,7 +225,7 @@ class CompanyAiAnalysisApplicationService:
         self._detail = CompanyDetailQueryService(engine)
         self._ai_repo = CompanyAiAnalysisRepository(engine)
 
-    def analyze(self, run_id: int, ts_code: str) -> dict[str, Any]:
+    def analyze(self, run_id: int, ts_code: str, *, force_refresh: bool = False) -> dict[str, Any]:
         settings = CompanyAiAnalysisSettings.from_env()
         if not settings.is_ready():
             gaps = settings.readiness_gaps_zh()
@@ -241,13 +253,20 @@ class CompanyAiAnalysisApplicationService:
         if err == "symbol_not_in_run":
             raise CompanyAiDetailError("symbol_not_in_run")
 
-        ctx = build_analysis_context(detail)
+        iq_payload = compute_investment_quality_for_run_symbol(self._engine, run_id, ts_code)
+        detail_with_iq = dict(detail)
+        if iq_payload is not None:
+            detail_with_iq["investment_quality"] = iq_payload
+        else:
+            detail_with_iq["investment_quality"] = None
+
+        ctx = build_analysis_context(detail_with_iq)
         context_json = _canonical_context_json(ctx)
         ctx_hash = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
         model_id = settings.model or ""
         cache_key = ai_analysis_cache_key(ctx_hash, model_id, PROMPT_VERSION)
 
-        if settings.cache_ttl_seconds > 0:
+        if (not force_refresh) and settings.cache_ttl_seconds > 0:
             cached = ai_cache_get(cache_key)
             if cached is not None:
                 meta = dict(cached.get("meta") or {})
@@ -261,12 +280,19 @@ class CompanyAiAnalysisApplicationService:
         generated_at = datetime.now(timezone.utc)
         dcf_raw = detail.get("dcf")
         dcf_json, dcf_ok, dcf_headline = dcf_snapshot_for_persistence(dcf_raw)
+        iq_commentary = (parsed.investment_quality_commentary or "").strip()
+        narrative_combined = (parsed.narrative_markdown or "").strip()
+        if iq_commentary:
+            narrative_combined = (
+                "## 价值判断（规则引擎）\n\n" + iq_commentary + "\n\n---\n\n" + narrative_combined
+            )
         body: dict[str, Any] = {
             "summary": parsed.summary,
             "key_metrics_commentary": parsed.key_metrics_commentary,
             "risks": parsed.risks,
             "alignment_with_scores": parsed.alignment_with_scores,
-            "narrative_markdown": parsed.narrative_markdown,
+            "investment_quality_commentary": iq_commentary,
+            "narrative_markdown": narrative_combined,
             "ai_score": ai_score,
             "ai_score_rationale": (parsed.ai_score_rationale or "").strip(),
             "opportunity_score": opportunity_score,

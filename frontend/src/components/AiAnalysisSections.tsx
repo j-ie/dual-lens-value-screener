@@ -7,6 +7,8 @@ export type AiStructured = {
   key_metrics_commentary: string;
   risks: string;
   alignment_with_scores: string;
+  /** 模型对规则引擎价值判断的专门解读；旧落库记录可能为空 */
+  investment_quality_commentary?: string;
   narrative_markdown: string;
   ai_score: number;
   ai_score_rationale?: string;
@@ -71,6 +73,15 @@ export function AiAnalysisSections({ data, dcfExtra }: Props) {
       </Descriptions>
 
       {dcfExtra}
+
+      {data.investment_quality_commentary ? (
+        <>
+          <div className="vs-section-title">价值判断（规则引擎 · 模型解读）</div>
+          <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 16 }}>
+            {data.investment_quality_commentary}
+          </Typography.Paragraph>
+        </>
+      ) : null}
 
       <div className="vs-section-title">摘要</div>
       <Typography.Paragraph style={{ marginBottom: 0 }}>{data.summary}</Typography.Paragraph>

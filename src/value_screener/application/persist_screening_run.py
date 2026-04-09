@@ -41,6 +41,12 @@ def _rows_from_screening_results(
             "combined_score": comb,
             "coverage_ok": cov,
         }
+        iq = item.get("investment_quality")
+        if isinstance(iq, dict):
+            row["investment_quality_json"] = iq
+            dec = iq.get("decision")
+            if isinstance(dec, str) and dec.strip():
+                row["iq_decision"] = dec.strip()
         if use_hybrid:
             hy = build_hybrid_persist_fields(snaps[idx])
             row["run_fact_json"] = hy["run_fact_json"]

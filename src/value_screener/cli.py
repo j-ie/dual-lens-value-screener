@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 
 from value_screener.application.batch_screening_service import BatchScreeningApplicationService
 from value_screener.application.screening_service import ScreeningApplicationService
+from value_screener.infrastructure.app_db import get_engine
 from value_screener.infrastructure.factory import build_composite_provider
 from value_screener.infrastructure.settings import AShareIngestionSettings
 
@@ -126,7 +128,14 @@ def _run_batch_screen(args: argparse.Namespace) -> int:
         symbols = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("#")]
 
     provider = build_composite_provider(settings)
-    batch_svc = BatchScreeningApplicationService(provider, ScreeningApplicationService())
+    screening_engine = None
+    if os.environ.get("DATABASE_URL", "").strip():
+        screening_engine = get_engine()
+    batch_svc = BatchScreeningApplicationService(
+        provider,
+        ScreeningApplicationService(),
+        screening_engine=screening_engine,
+    )
     result = batch_svc.run(symbols=symbols, max_symbols=args.max_symbols)
 
     payload = {

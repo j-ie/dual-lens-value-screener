@@ -1,4 +1,4 @@
-"""pytest 全局夹具：避免 TuShare 批跑路径在单测里触发东财现货网络请求。"""
+"""pytest 全局夹具：单测中强制不拉东财补股息（与生产默认一致，且防止误设 USE_EM 时走网络）。"""
 
 from __future__ import annotations
 

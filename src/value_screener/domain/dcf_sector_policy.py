@@ -22,6 +22,9 @@ class DcfSectorKind(str, Enum):
     REAL_ESTATE = "real_estate"
     """房地产开发等：负债合计 − 合同负债（若可得）− 货币资金，削弱预收房款对杠杆的高估。"""
 
+    CYCLICAL = "cyclical"
+    """强周期行业：景气波动大，估值阈值需采用周期口径，避免单年利润错判。"""
+
 
 _FINANCIAL_INDUSTRY_LABELS: frozenset[str] = frozenset(
     {
@@ -41,6 +44,42 @@ _REAL_ESTATE_INDUSTRY_LABELS: frozenset[str] = frozenset(
     }
 )
 
+_CYCLICAL_INDUSTRY_LABELS: frozenset[str] = frozenset(
+    {
+        "航运",
+        "港口",
+        "航空",
+        "机场",
+        "煤炭",
+        "钢铁",
+        "有色金属",
+        "石油开采",
+        "石油加工",
+        "化工原料",
+        "化肥行业",
+        "水泥建材",
+        "工程机械",
+        "船舶制造",
+        "汽车整车",
+        "养殖业",
+        "饲料",
+    }
+)
+
+_CYCLICAL_KEYWORDS: tuple[str, ...] = (
+    "生猪",
+    "猪",
+    "航运",
+    "航海",
+    "油运",
+    "干散货",
+    "煤炭",
+    "钢铁",
+    "有色",
+    "化工",
+    "周期",
+)
+
 
 def resolve_dcf_sector_kind(industry: str | None) -> DcfSectorKind:
     """
@@ -54,4 +93,8 @@ def resolve_dcf_sector_kind(industry: str | None) -> DcfSectorKind:
         return DcfSectorKind.FINANCIAL
     if label in _REAL_ESTATE_INDUSTRY_LABELS or "地产" in label:
         return DcfSectorKind.REAL_ESTATE
+    if label in _CYCLICAL_INDUSTRY_LABELS:
+        return DcfSectorKind.CYCLICAL
+    if any(k in label for k in _CYCLICAL_KEYWORDS):
+        return DcfSectorKind.CYCLICAL
     return DcfSectorKind.GENERAL

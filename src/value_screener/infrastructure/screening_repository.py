@@ -39,6 +39,8 @@ OrderKey = Literal["asc", "desc"]
 
 # 与 facets 及筛选参数一致：空/未匹配 reference 的行业用该字面量
 INDUSTRY_EMPTY_QUERY_VALUE = "__EMPTY__"
+# 批跑早于价值质量落库、或计算失败未写入 iq_decision 时用该字面量筛选
+IQ_DECISION_EMPTY_QUERY_VALUE = "__IQ_EMPTY__"
 
 
 def _coalesced_dividend_yield_percent_sql() -> Any:
@@ -317,6 +319,8 @@ class ScreeningRepository:
             run_fact_json=stmt.inserted.run_fact_json,
             market_cap=stmt.inserted.market_cap,
             pe_ttm=stmt.inserted.pe_ttm,
+            investment_quality_json=stmt.inserted.investment_quality_json,
+            iq_decision=stmt.inserted.iq_decision,
         )
         conn.execute(stmt)
 
@@ -357,6 +361,52 @@ class ScreeningRepository:
             )
         return out
 
+    def list_investment_quality_inputs_for_runs(
+        self,
+        conn: Connection,
+        run_ids: Sequence[int],
+    ) -> dict[int, list[dict[str, Any]]]:
+        ids = [int(x) for x in run_ids if int(x) > 0]
+        if not ids:
+            return {}
+        stmt = (
+            select(
+                screening_result.c.run_id,
+                screening_result.c.symbol,
+                screening_result.c.run_fact_json,
+                screening_result.c.provenance_json,
+                screening_result.c.market_cap,
+                security_reference.c.industry.label("ref_industry"),
+            )
+            .select_from(
+                screening_result.outerjoin(
+                    security_reference,
+                    screening_result.c.symbol == security_reference.c.ts_code,
+                )
+            )
+            .where(screening_result.c.run_id.in_(ids))
+        )
+        out: dict[int, list[dict[str, Any]]] = {}
+        for row in conn.execute(stmt).mappings():
+            rid = int(row["run_id"])
+            run_fact = row.get("run_fact_json")
+            if not isinstance(run_fact, dict):
+                continue
+            out.setdefault(rid, []).append(
+                {
+                    "symbol": row.get("symbol"),
+                    "run_fact_json": dict(run_fact),
+                    "provenance": dict(row.get("provenance_json"))
+                    if isinstance(row.get("provenance_json"), dict)
+                    else None,
+                    "industry": row.get("ref_industry") or "",
+                    "market_cap": _decimal_to_float(row["market_cap"])
+                    if row.get("market_cap") is not None
+                    else None,
+                }
+            )
+        return out
+
     def list_distinct_industries_for_run(
         self,
         conn: Connection,
@@ -383,6 +433,30 @@ class ScreeningRepository:
         for v in raw:
             s = (v or "").strip()
             out.add(INDUSTRY_EMPTY_QUERY_VALUE if not s else s)
+        return sorted(out)
+
+    def list_distinct_iq_decisions_for_run(
+        self,
+        conn: Connection,
+        run_id: int,
+        *,
+        limit: int = 64,
+    ) -> list[str]:
+        """某 run 已落库的价值质量结论（iq_decision）去重；含未计算占位 `__IQ_EMPTY__`。"""
+
+        stmt = (
+            select(screening_result.c.iq_decision)
+            .where(screening_result.c.run_id == run_id)
+            .distinct()
+            .limit(max(1, min(int(limit), 256)))
+        )
+        raw = [row[0] for row in conn.execute(stmt)]
+        out: set[str] = set()
+        for v in raw:
+            if v is None or (isinstance(v, str) and not str(v).strip()):
+                out.add(IQ_DECISION_EMPTY_QUERY_VALUE)
+            else:
+                out.add(str(v).strip())
         return sorted(out)
 
     def list_top_symbols_by_combined(
@@ -485,6 +559,7 @@ class ScreeningRepository:
         market_cap_max: float | None = None,
         dividend_yield_min: float | None = None,
         dividend_yield_max: float | None = None,
+        iq_decisions: list[str] | None = None,
     ) -> ResultPage:
         if page < 1:
             page = 1
@@ -555,6 +630,10 @@ class ScreeningRepository:
             where_clause = and_(where_clause, dv_eff.isnot(None), dv_eff >= dividend_yield_min)
         if dividend_yield_max is not None:
             where_clause = and_(where_clause, dv_eff.isnot(None), dv_eff <= dividend_yield_max)
+
+        iq_list = [i.strip() for i in (iq_decisions or []) if i and i.strip()]
+        if iq_list:
+            where_clause = and_(where_clause, _iq_decision_filter_or(iq_list))
 
         join_from = (
             screening_result.outerjoin(
@@ -634,6 +713,8 @@ class ScreeningRepository:
                 screening_result.c.run_fact_json,
                 screening_result.c.market_cap,
                 screening_result.c.pe_ttm,
+                screening_result.c.investment_quality_json,
+                screening_result.c.iq_decision,
                 security_reference.c.name.label("ref_name"),
                 security_reference.c.fullname.label("ref_fullname"),
                 security_reference.c.industry.label("ref_industry"),
@@ -692,6 +773,8 @@ class ScreeningRepository:
                 screening_result.c.run_fact_json,
                 screening_result.c.market_cap,
                 screening_result.c.pe_ttm,
+                screening_result.c.investment_quality_json,
+                screening_result.c.iq_decision,
                 security_reference.c.name.label("ref_name"),
                 security_reference.c.fullname.label("ref_fullname"),
                 security_reference.c.industry.label("ref_industry"),
@@ -733,6 +816,9 @@ def _mapping_to_screening_item(r: Mapping[str, Any], *, wb: float, wg: float) ->
     run_fact = dict(rfj) if isinstance(rfj, dict) else None
     mcap_col = r.get("market_cap")
     pe_col = r.get("pe_ttm")
+    iqj = r.get("investment_quality_json")
+    iq_obj = dict(iqj) if isinstance(iqj, dict) else None
+    iq_dec = r.get("iq_decision")
     out: dict[str, Any] = {
         "symbol": r["symbol"],
         "graham_score": gsc,
@@ -748,6 +834,8 @@ def _mapping_to_screening_item(r: Mapping[str, Any], *, wb: float, wg: float) ->
         "run_fact_json": run_fact,
         "market_cap": _decimal_to_float(mcap_col) if mcap_col is not None else None,
         "pe_ttm": _decimal_to_float(pe_col) if pe_col is not None else None,
+        "investment_quality": iq_obj,
+        "iq_decision": str(iq_dec).strip() if iq_dec is not None and str(iq_dec).strip() else None,
         "ref_name": r["ref_name"],
         "ref_fullname": r["ref_fullname"],
         "ref_industry": r["ref_industry"],
@@ -774,6 +862,19 @@ def _mapping_to_screening_item(r: Mapping[str, Any], *, wb: float, wg: float) ->
         out["ai_run_id"] = None
         out["ai_summary_preview"] = None
     return out
+
+
+def _iq_decision_filter_or(iq_decisions: list[str]) -> Any:
+    parts: list[Any] = []
+    for raw in iq_decisions:
+        s = raw.strip()
+        if s == IQ_DECISION_EMPTY_QUERY_VALUE or s == "":
+            parts.append(screening_result.c.iq_decision.is_(None))
+        else:
+            parts.append(screening_result.c.iq_decision == s)
+    if len(parts) == 1:
+        return parts[0]
+    return or_(*parts)
 
 
 def _industry_filter_or(industries: list[str]) -> Any:

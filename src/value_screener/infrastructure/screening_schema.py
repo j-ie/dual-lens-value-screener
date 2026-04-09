@@ -59,6 +59,8 @@ screening_result = Table(
     Column("run_fact_json", JSON, nullable=True),
     Column("market_cap", Numeric(24, 4), nullable=True),
     Column("pe_ttm", Numeric(24, 8), nullable=True),
+    Column("investment_quality_json", JSON, nullable=True),
+    Column("iq_decision", String(32), nullable=True),
     UniqueConstraint("run_id", "symbol", name="uk_screening_result_run_symbol"),
 )
 

@@ -31,6 +31,7 @@ type CompanyAiAnalysisResponse = {
   key_metrics_commentary: string;
   risks: string;
   alignment_with_scores: string;
+  investment_quality_commentary?: string;
   narrative_markdown: string;
   ai_score: number;
   ai_score_rationale?: string;
@@ -93,7 +94,35 @@ type CompanyDetailResponse = {
   persisted_ai_analysis?: PersistedAiAnalysisBlock | null;
 };
 
+type DetailInvestmentQuality = {
+  total_score: number;
+  decision: string;
+  decision_label_zh: string;
+  is_undervalued: boolean;
+  is_worth_buy?: boolean;
+  worth_buy_label_zh?: string;
+  worth_buy_reason_codes?: string[];
+  module_scores: Record<string, number>;
+  reasons: string[];
+  risk_flags: Array<{ code: string; severity: number; message: string }>;
+};
+
 const EMPTY = "—";
+const IQ_CACHE_PREFIX = "vs:detail:iq:";
+const AI_CACHE_PREFIX = "vs:detail:ai:";
+const DCF_CACHE_PREFIX = "vs:detail:dcf:";
+
+function buildIqCacheKey(runId: string, tsCode: string): string {
+  return `${IQ_CACHE_PREFIX}${runId}:${tsCode}`;
+}
+
+function buildAiCacheKey(runId: string, tsCode: string): string {
+  return `${AI_CACHE_PREFIX}${runId}:${tsCode}`;
+}
+
+function buildDcfCacheKey(runId: string, tsCode: string): string {
+  return `${DCF_CACHE_PREFIX}${runId}:${tsCode}`;
+}
 
 function fmtNum(v: unknown): string {
   if (v === null || v === undefined) {
@@ -113,7 +142,11 @@ export default function CompanyDetailPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<CompanyAiAnalysisResponse | null>(null);
+  const [iqLoading, setIqLoading] = useState(false);
+  const [iqError, setIqError] = useState<string | null>(null);
+  const [iqResult, setIqResult] = useState<DetailInvestmentQuality | null>(null);
   const [dcfLoading, setDcfLoading] = useState(false);
+  const [dcfResult, setDcfResult] = useState<CompanyDcfBlock | null>(null);
 
   useEffect(() => {
     if (!runId || !tsCode) {
@@ -164,6 +197,41 @@ export default function CompanyDetailPage() {
     };
   }, [runId, tsCode]);
 
+  useEffect(() => {
+    if (!runId || !tsCode) {
+      setIqResult(null);
+      setAiResult(null);
+      setDcfResult(null);
+      return;
+    }
+    const code = decodeURIComponent(tsCode);
+    try {
+      const iqRaw = window.localStorage.getItem(buildIqCacheKey(runId, code));
+      if (iqRaw) {
+        const iqParsed = JSON.parse(iqRaw) as { investment_quality?: DetailInvestmentQuality };
+        if (iqParsed && iqParsed.investment_quality) {
+          setIqResult(iqParsed.investment_quality);
+        }
+      }
+      const aiRaw = window.localStorage.getItem(buildAiCacheKey(runId, code));
+      if (aiRaw) {
+        const aiParsed = JSON.parse(aiRaw) as { ai_result?: CompanyAiAnalysisResponse };
+        if (aiParsed && aiParsed.ai_result) {
+          setAiResult(aiParsed.ai_result);
+        }
+      }
+      const dcfRaw = window.localStorage.getItem(buildDcfCacheKey(runId, code));
+      if (dcfRaw) {
+        const dcfParsed = JSON.parse(dcfRaw) as { dcf_result?: CompanyDcfBlock | null };
+        if (dcfParsed && "dcf_result" in dcfParsed) {
+          setDcfResult(dcfParsed.dcf_result ?? null);
+        }
+      }
+    } catch {
+      // ignore broken cache
+    }
+  }, [runId, tsCode]);
+
   const displayAi = useMemo(() => {
     if (aiResult) {
       return {
@@ -173,6 +241,7 @@ export default function CompanyDetailPage() {
           key_metrics_commentary: aiResult.key_metrics_commentary,
           risks: aiResult.risks,
           alignment_with_scores: aiResult.alignment_with_scores,
+          investment_quality_commentary: aiResult.investment_quality_commentary,
           narrative_markdown: aiResult.narrative_markdown,
           ai_score: aiResult.ai_score,
           ai_score_rationale: aiResult.ai_score_rationale,
@@ -223,7 +292,7 @@ export default function CompanyDetailPage() {
     const code = decodeURIComponent(tsCode);
     setDcfLoading(true);
     try {
-      const params = new URLSearchParams({ include_dcf: "1" });
+      const params = new URLSearchParams({ include_dcf: "1", t: String(Date.now()) });
       const res = await fetch(
         `/api/v1/runs/${rid}/companies/${encodeURIComponent(code)}/detail?${params.toString()}`,
       );
@@ -231,7 +300,19 @@ export default function CompanyDetailPage() {
         throw new Error(await res.text());
       }
       const body = (await res.json()) as CompanyDetailResponse;
-      setDetail((prev) => (prev ? { ...prev, dcf: body.dcf ?? null } : prev));
+      const nextDcf = body.dcf ?? null;
+      setDetail((prev) => (prev ? { ...prev, dcf: nextDcf } : prev));
+      setDcfResult(nextDcf);
+      if (runId) {
+        try {
+          window.localStorage.setItem(
+            buildDcfCacheKey(runId, code),
+            JSON.stringify({ cached_at: new Date().toISOString(), dcf_result: nextDcf }),
+          );
+        } catch {
+          // ignore quota/storage errors
+        }
+      }
     } catch (e) {
       message.error(`加载 DCF 失败：${e}`);
     } finally {
@@ -253,7 +334,7 @@ export default function CompanyDetailPage() {
     setAiError(null);
     try {
       const res = await fetch(
-        `/api/v1/runs/${rid}/companies/${encodeURIComponent(code)}/ai-analysis`,
+        `/api/v1/runs/${rid}/companies/${encodeURIComponent(code)}/ai-analysis?force_refresh=1&t=${Date.now()}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -290,6 +371,16 @@ export default function CompanyDetailPage() {
       }
       const body = (await res.json()) as CompanyAiAnalysisResponse;
       setAiResult(body);
+      if (runId) {
+        try {
+          window.localStorage.setItem(
+            buildAiCacheKey(runId, code),
+            JSON.stringify({ cached_at: new Date().toISOString(), ai_result: body }),
+          );
+        } catch {
+          // ignore quota/storage errors
+        }
+      }
     } catch (e) {
       setAiError(`请求失败：${e}`);
     } finally {
@@ -297,7 +388,56 @@ export default function CompanyDetailPage() {
     }
   };
 
+  const runInvestmentQuality = async () => {
+    if (!runId || !tsCode) {
+      return;
+    }
+    const rid = Number(runId);
+    if (!Number.isFinite(rid)) {
+      message.error("无效的 run id");
+      return;
+    }
+    const code = decodeURIComponent(tsCode);
+    setIqLoading(true);
+    setIqError(null);
+    try {
+      const res = await fetch(
+        `/api/v1/runs/${rid}/companies/${encodeURIComponent(code)}/investment-quality?t=${Date.now()}`,
+        {
+        method: "POST",
+        },
+      );
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      const body = (await res.json()) as { investment_quality?: DetailInvestmentQuality };
+      if (!body.investment_quality) {
+        throw new Error("投资质量结果缺失");
+      }
+      setIqResult(body.investment_quality);
+      if (runId) {
+        const cacheKey = buildIqCacheKey(runId, code);
+        try {
+          window.localStorage.setItem(
+            cacheKey,
+            JSON.stringify({
+              cached_at: new Date().toISOString(),
+              investment_quality: body.investment_quality,
+            }),
+          );
+        } catch {
+          // ignore quota/storage errors
+        }
+      }
+    } catch (e) {
+      setIqError(`请求失败：${e}`);
+    } finally {
+      setIqLoading(false);
+    }
+  };
+
   const snap = detail?.run_snapshot;
+  const displayDcf = dcfResult ?? detail?.dcf ?? null;
   const incomeCols: ColumnsType<Record<string, unknown>> = [
     { title: "报告期", dataIndex: "end_date", width: 100 },
     { title: "营收", dataIndex: "total_revenue", render: fmtNum },
@@ -363,6 +503,48 @@ export default function CompanyDetailPage() {
             </Descriptions>
 
             <Typography.Title level={5} style={{ marginTop: 24 }}>
+              价值质量判断（手动触发）
+            </Typography.Title>
+            <Space wrap style={{ marginBottom: 12 }}>
+              <Button loading={iqLoading} onClick={() => void runInvestmentQuality()}>
+                立即评估
+              </Button>
+            </Space>
+            {iqError ? (
+              <Typography.Paragraph type="danger" style={{ marginBottom: 12 }}>
+                {iqError}
+              </Typography.Paragraph>
+            ) : null}
+            {iqResult ? (
+              <>
+                <Descriptions bordered size="small" column={2}>
+                  <Descriptions.Item label="结论">{iqResult.decision_label_zh}</Descriptions.Item>
+                  <Descriptions.Item label="是否低估">{iqResult.is_undervalued ? "是" : "否"}</Descriptions.Item>
+                  <Descriptions.Item label="是否值得买入">
+                    {iqResult.worth_buy_label_zh ?? (iqResult.is_worth_buy ? "值得买入" : "谨慎观察")}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="总分">{fmtNum(iqResult.total_score)}</Descriptions.Item>
+                  <Descriptions.Item label="判定依据码" span={2}>
+                    {iqResult.worth_buy_reason_codes?.join("；") || EMPTY}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="模块分" span={2}>
+                    {Object.entries(iqResult.module_scores)
+                      .map(([k, v]) => `${k}: ${fmtNum(v)}`)
+                      .join("；") || EMPTY}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="原因" span={2}>
+                    {iqResult.reasons.join("；") || EMPTY}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="风险提示" span={2}>
+                    {iqResult.risk_flags.length > 0
+                      ? iqResult.risk_flags.map((x) => x.message).join("；")
+                      : EMPTY}
+                  </Descriptions.Item>
+                </Descriptions>
+              </>
+            ) : null}
+
+            <Typography.Title level={5} style={{ marginTop: 24 }}>
               AI 分析（手动触发）
             </Typography.Title>
             <Alert
@@ -418,45 +600,45 @@ export default function CompanyDetailPage() {
                 加载 DCF 估值
               </Button>
             </Space>
-            {detail.dcf ? (
-              detail.dcf.ok && detail.dcf.values && detail.dcf.assumptions ? (
+            {displayDcf ? (
+              displayDcf.ok && displayDcf.values && displayDcf.assumptions ? (
                 <div style={{ marginBottom: 16 }}>
                   <Descriptions bordered size="small" column={2} title="假设与结果摘要">
                     <Descriptions.Item label="WACC">
-                      {fmtNum(detail.dcf.assumptions.wacc)}
+                      {fmtNum(displayDcf.assumptions.wacc)}
                     </Descriptions.Item>
                     <Descriptions.Item label="预测期增长率 g">
-                      {fmtNum(detail.dcf.assumptions.stage1_growth)}
+                      {fmtNum(displayDcf.assumptions.stage1_growth)}
                     </Descriptions.Item>
                     <Descriptions.Item label="永续增长率 g_terminal">
-                      {fmtNum(detail.dcf.assumptions.terminal_growth)}
+                      {fmtNum(displayDcf.assumptions.terminal_growth)}
                     </Descriptions.Item>
                     <Descriptions.Item label="预测年数">
-                      {String(detail.dcf.assumptions.forecast_years ?? EMPTY)}
+                      {String(displayDcf.assumptions.forecast_years ?? EMPTY)}
                     </Descriptions.Item>
                     <Descriptions.Item label="基期折现基数（代理）" span={2}>
-                      {fmtNum(detail.dcf.assumptions.base_fcf)}
+                      {fmtNum(displayDcf.assumptions.base_fcf)}
                     </Descriptions.Item>
-                    {detail.dcf.assumptions.financial_reported_n_income != null &&
-                    detail.dcf.assumptions.financial_reported_n_income !== undefined ? (
+                    {displayDcf.assumptions.financial_reported_n_income != null &&
+                    displayDcf.assumptions.financial_reported_n_income !== undefined ? (
                       <>
                         <Descriptions.Item label="年报归母净利（折现前）" span={2}>
-                          {fmtNum(detail.dcf.assumptions.financial_reported_n_income)}
+                          {fmtNum(displayDcf.assumptions.financial_reported_n_income)}
                         </Descriptions.Item>
                         <Descriptions.Item label="金融业折现基数系数" span={2}>
-                          {fmtNum(detail.dcf.assumptions.financial_ni_base_scale)}
+                          {fmtNum(displayDcf.assumptions.financial_ni_base_scale)}
                         </Descriptions.Item>
                       </>
                     ) : null}
                     <Descriptions.Item label="每股内在价值（元）" span={2}>
-                      {fmtNum(detail.dcf.values.value_per_share)}
+                      {fmtNum(displayDcf.values.value_per_share)}
                     </Descriptions.Item>
                     <Descriptions.Item label="企业价值 EV" span={2}>
-                      {fmtNum(detail.dcf.values.enterprise_value)}
+                      {fmtNum(displayDcf.values.enterprise_value)}
                     </Descriptions.Item>
-                    {detail.dcf.assumptions.financial_equity_direct_bridge === true ? (
+                    {displayDcf.assumptions.financial_equity_direct_bridge === true ? (
                       <Descriptions.Item label="表内有息净负债（参考，未参与扣减）" span={2}>
-                        {fmtNum(detail.dcf.assumptions.balance_sheet_net_debt_proxy)}
+                        {fmtNum(displayDcf.assumptions.balance_sheet_net_debt_proxy)}
                       </Descriptions.Item>
                     ) : null}
                   </Descriptions>
@@ -470,7 +652,7 @@ export default function CompanyDetailPage() {
                         : typeof closeRaw === "string"
                           ? Number(closeRaw)
                           : NaN;
-                    const intrinsic = Number(detail.dcf.values?.value_per_share);
+                    const intrinsic = Number(displayDcf.values?.value_per_share);
                     if (
                       !Number.isFinite(close) ||
                       close <= 0 ||
@@ -488,17 +670,17 @@ export default function CompanyDetailPage() {
                       </Typography.Paragraph>
                     );
                   })()}
-                  {detail.dcf.warnings && detail.dcf.warnings.length > 0 ? (
+                  {displayDcf.warnings && displayDcf.warnings.length > 0 ? (
                     <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                      提示：{detail.dcf.warnings.join("；")}
+                      提示：{displayDcf.warnings.join("；")}
                     </Typography.Paragraph>
                   ) : null}
                 </div>
               ) : (
                 <Typography.Paragraph type="secondary">
                   未能完成估值
-                  {detail.dcf.skip_reason ? `（${detail.dcf.skip_reason}）` : ""}
-                  {detail.dcf.message ? `：${detail.dcf.message}` : ""}
+                  {displayDcf.skip_reason ? `（${displayDcf.skip_reason}）` : ""}
+                  {displayDcf.message ? `：${displayDcf.message}` : ""}
                 </Typography.Paragraph>
               )
             ) : null}

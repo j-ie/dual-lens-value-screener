@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from value_screener.application.financial_statement_payload import to_float_or_none
+from value_screener.application.financial_statement_payload import investing_cashflow_net_from_row, to_float_or_none
 
 _QUARTER_SUFFIXES = ("0331", "0630", "0930", "1231")
 
@@ -77,10 +77,10 @@ def _extract_quarterly_increments(
         o2 = to_float_or_none(r2.get("n_cashflow_act")) if r2 else None
         o3 = to_float_or_none(r3.get("n_cashflow_act")) if r3 else None
         o4 = to_float_or_none(r4.get("n_cashflow_act")) if r4 else None
-        i1 = to_float_or_none(r1.get("n_cash_flows_inv_act")) if r1 else None
-        i2 = to_float_or_none(r2.get("n_cash_flows_inv_act")) if r2 else None
-        i3 = to_float_or_none(r3.get("n_cash_flows_inv_act")) if r3 else None
-        i4 = to_float_or_none(r4.get("n_cash_flows_inv_act")) if r4 else None
+        i1 = investing_cashflow_net_from_row(r1) if r1 else None
+        i2 = investing_cashflow_net_from_row(r2) if r2 else None
+        i3 = investing_cashflow_net_from_row(r3) if r3 else None
+        i4 = investing_cashflow_net_from_row(r4) if r4 else None
 
         if o1 is None:
             continue
@@ -154,7 +154,7 @@ def aggregate_ocf_and_capex_proxy_ttm(
         ocf = to_float_or_none(row.get("n_cashflow_act"))
         if ocf is None:
             return None, None, None, ["年报缺少经营现金流 n_cashflow_act"]
-        inv = to_float_or_none(row.get("n_cash_flows_inv_act"))
+        inv = investing_cashflow_net_from_row(row)
         wloc: list[str] = []
         if stale_note:
             wloc.append(
@@ -162,7 +162,7 @@ def aggregate_ocf_and_capex_proxy_ttm(
                 "仍采用年报全年口径作基期（建议核对是否应改用季度 TTM）"
             )
         if inv is None:
-            wloc.append("缺少投资活动现金流 n_cash_flows_inv_act，未扣除资本开支代理，基期现金流等于年报经营现金流")
+            wloc.append("缺少投资活动现金流（n_cashflow_inv_act），未扣除资本开支代理，基期现金流等于年报经营现金流")
             return float(ocf), None, float(ocf), wloc
         cap = max(0.0, -float(inv))
         return float(ocf), cap, float(ocf) - cap, wloc
@@ -229,13 +229,13 @@ def aggregate_ocf_and_capex_proxy_ttm(
     ocf = to_float_or_none(latest.get("n_cashflow_act"))
     if ocf is None:
         return None, None, None, warnings + ["最近一期现金流量表缺少 n_cashflow_act"]
-    inv = to_float_or_none(latest.get("n_cash_flows_inv_act"))
+    inv = investing_cashflow_net_from_row(latest)
     warnings.append(
         f"无法组成四季度 TTM 且无可用年报，基期仅取最近一期（{ed}）经营现金流；"
         "若该期为季报累计值，DCF 基数可能失真，请补全财报或扩大同步窗口"
     )
     if inv is None:
-        warnings.append("缺少投资活动现金流 n_cash_flows_inv_act，未扣除资本开支代理")
+        warnings.append("缺少投资活动现金流（n_cashflow_inv_act），未扣除资本开支代理")
         return float(ocf), None, float(ocf), warnings
     cap = max(0.0, -float(inv))
     return float(ocf), cap, float(ocf) - cap, warnings

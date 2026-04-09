@@ -22,7 +22,7 @@ from value_screener.infrastructure.screening_repository import (
 )
 from value_screener.infrastructure.screening_schema import company_ai_analysis, security_reference
 
-ListSortKey = Literal["analysis_date", "ai_score", "ts_code"]
+ListSortKey = Literal["analysis_date", "ai_score", "opportunity_score", "ts_code"]
 ListOrderKey = Literal["asc", "desc"]
 
 
@@ -187,6 +187,13 @@ class CompanyAiAnalysisRepository:
             order_by_list = [primary, company_ai_analysis.c.analysis_date.desc(), company_ai_analysis.c.id.desc()]
         elif sort_key == "ai_score":
             primary = desc(company_ai_analysis.c.ai_score) if order == "desc" else asc(company_ai_analysis.c.ai_score)
+            order_by_list = [primary, company_ai_analysis.c.ts_code.asc(), company_ai_analysis.c.id.desc()]
+        elif sort_key == "opportunity_score":
+            primary = (
+                desc(company_ai_analysis.c.opportunity_score)
+                if order == "desc"
+                else asc(company_ai_analysis.c.opportunity_score)
+            )
             order_by_list = [primary, company_ai_analysis.c.ts_code.asc(), company_ai_analysis.c.id.desc()]
         else:
             primary = (

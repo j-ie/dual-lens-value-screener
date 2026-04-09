@@ -36,6 +36,11 @@ type RunItem = {
   post_pipeline_ai_skip_reason?: string | null;
   post_pipeline_ai_symbol_pick?: string | null;
   post_pipeline_finished_at?: string | null;
+  investment_quality_summary?: {
+    worth_buy_count?: number | null;
+    analyzed_count?: number | null;
+    label_zh?: string | null;
+  } | null;
 };
 
 function statusTag(status: string) {
@@ -137,6 +142,19 @@ function formatPostPipeline(r: RunItem): string {
     return `${p}（已超时，可再次点「后置任务」重试）`;
   }
   return p;
+}
+
+function formatWorthBuySummary(r: RunItem): string {
+  const s = r.investment_quality_summary;
+  if (!s) {
+    return "—";
+  }
+  const buy = s.worth_buy_count;
+  const total = s.analyzed_count;
+  if (typeof buy === "number" && typeof total === "number" && total >= 0) {
+    return `值得买入 ${buy}/${total}`;
+  }
+  return s.label_zh ?? "—";
 }
 
 export default function DataTasksPage() {
@@ -290,6 +308,17 @@ export default function DataTasksPage() {
         width: 120,
         ellipsis: true,
         render: (v: string | null) => v ?? "—",
+      },
+      {
+        title: "是否值得买入",
+        key: "worth_buy",
+        width: 180,
+        ellipsis: true,
+        render: (_: unknown, r) => (
+          <Tooltip title="口径：投资质量结论=可买 且 低估=true 且风险可控时计入“值得买入”">
+            <Typography.Text>{formatWorthBuySummary(r)}</Typography.Text>
+          </Tooltip>
+        ),
       },
       {
         title: "后置流水线",

@@ -19,9 +19,18 @@ from value_screener.application.company_ai_analysis import (
     CompanyAiUpstreamError,
 )
 from value_screener.application.company_detail_query import CompanyDetailQueryService
+from value_screener.application.investment_quality_run_context import (
+    enrich_run_fact_from_provider_snapshot,
+    hydrate_run_fact_from_db,
+    missing_required_iq_fields,
+)
+from value_screener.application.investment_quality_view import (
+    attach_investment_quality_for_result_row,
+)
 from value_screener.application.persist_screening_run import create_running_screening_run
 from value_screener.application.result_enrichment import enrich_screening_result_row
 from value_screener.domain.combined_ranking_params import CombinedRankingParams
+from value_screener.domain.investment_quality import InvestmentQualityAnalyzer
 from value_screener.domain.triple_composite_params import TripleCompositeParams
 from value_screener.infrastructure.app_db import get_engine
 from value_screener.infrastructure.company_ai_analysis_repository import CompanyAiAnalysisRepository
@@ -34,9 +43,11 @@ from value_screener.infrastructure.result_cache import (
     cache_set_json,
     cache_ttl_seconds,
     industries_cache_fingerprint,
+    iq_decisions_cache_fingerprint,
     valuation_filters_cache_fingerprint,
 )
 from value_screener.infrastructure.screening_repository import RunRow, ScreeningRepository
+from value_screener.infrastructure.symbol_normalize import to_ts_code
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +80,7 @@ class RunListItem(BaseModel):
     post_pipeline_ai_skip_reason: str | None = None
     post_pipeline_ai_symbol_pick: str | None = None
     post_pipeline_finished_at: str | None = None
+    investment_quality_summary: dict[str, Any] | None = None
 
 
 class ResultItem(BaseModel):
@@ -102,6 +114,12 @@ class ResultItem(BaseModel):
     net_income_ttm: float | None = None
     dv_ratio: float | None = Field(None, description="股息率（%），年报口径")
     dv_ttm: float | None = Field(None, description="股息率 TTM（%）")
+    investment_quality: dict[str, Any] | None = Field(
+        None,
+        description="批跑落库的价值质量规则引擎结果（与详情页规则一致）；旧 run 可能为 null",
+    )
+    iq_decision: str | None = Field(None, description="结论代码：buy/watchlist/cautious/reject")
+    iq_decision_label_zh: str | None = Field(None, description="结论文案：可买/跟踪/谨慎/排除等")
 
 
 class PagedResults(BaseModel):
@@ -117,6 +135,12 @@ class RunIndustriesResponse(BaseModel):
     """`industry` 查询参数多选 OR；空行业为字面量 `__EMPTY__`（与 INDUSTRY_EMPTY_QUERY_VALUE 一致）。"""
 
     industries: list[str]
+
+
+class RunIqDecisionsResponse(BaseModel):
+    """`iq_decision` 查询参数多选 OR；未落库结论为字面量 `__IQ_EMPTY__`。"""
+
+    iq_decisions: list[str]
 
 
 class CompanyDetailRunMeta(BaseModel):
@@ -195,6 +219,10 @@ class CompanyAiAnalysisResponse(BaseModel):
     key_metrics_commentary: str
     risks: str
     alignment_with_scores: str
+    investment_quality_commentary: str = Field(
+        default="",
+        description="模型对规则引擎 investment_quality 的解读（与 narrative_markdown 中价值判断段落一致来源）",
+    )
     narrative_markdown: str
     ai_score: float
     ai_score_rationale: str = ""
@@ -205,6 +233,11 @@ class CompanyAiAnalysisResponse(BaseModel):
         description="本次分析上下文中的 DCF 块（与落库 dcf_json 一致）",
     )
     meta: CompanyAiAnalysisMeta
+
+
+class CompanyInvestmentQualityResponse(BaseModel):
+    symbol: str
+    investment_quality: dict[str, Any]
 
 
 class BatchScreenTriggerRequest(BaseModel):
@@ -314,6 +347,36 @@ def _run_to_item(r: RunRow) -> RunListItem:
         post_pipeline_ai_symbol_pick=_meta_str(m, "post_pipeline_ai_symbol_pick"),
         post_pipeline_finished_at=pp_finished,
     )
+
+
+def _build_worth_buy_summary_for_runs(
+    repo: ScreeningRepository,
+    conn: Any,
+    rows: list[RunRow],
+) -> dict[int, dict[str, Any]]:
+    run_ids = [r.id for r in rows]
+    inputs = repo.list_investment_quality_inputs_for_runs(conn, run_ids)
+    analyzer = InvestmentQualityAnalyzer()
+    out: dict[int, dict[str, Any]] = {}
+    for run_id, run_rows in inputs.items():
+        analyzed_count = 0
+        worth_buy_count = 0
+        for row in run_rows:
+            decorated = attach_investment_quality_for_result_row(analyzer, row)
+            iq = decorated.get("investment_quality")
+            if not isinstance(iq, dict):
+                continue
+            analyzed_count += 1
+            if bool(iq.get("is_worth_buy")):
+                worth_buy_count += 1
+        if analyzed_count <= 0:
+            continue
+        out[run_id] = {
+            "worth_buy_count": worth_buy_count,
+            "analyzed_count": analyzed_count,
+            "label_zh": f"值得买入 {worth_buy_count}/{analyzed_count}",
+        }
+    return out
 
 
 @router.post(
@@ -474,7 +537,15 @@ def list_runs(limit: int = Query(50, ge=1, le=200)) -> list[RunListItem]:
     repo = ScreeningRepository(engine)
     with engine.connect() as conn:
         rows = repo.list_runs(conn, limit=limit)
-    return [_run_to_item(r) for r in rows]
+        worth_buy_map = _build_worth_buy_summary_for_runs(repo, conn, rows)
+    out: list[RunListItem] = []
+    for r in rows:
+        item = _run_to_item(r)
+        summary = worth_buy_map.get(r.id)
+        if summary is not None:
+            item = item.model_copy(update={"investment_quality_summary": summary})
+        out.append(item)
+    return out
 
 
 @router.get("/runs/{run_id}", response_model=RunListItem)
@@ -615,7 +686,11 @@ def company_detail(
     "/runs/{run_id}/companies/{ts_code}/ai-analysis",
     response_model=CompanyAiAnalysisResponse,
 )
-def company_ai_analysis(run_id: int, ts_code: str) -> CompanyAiAnalysisResponse:
+def company_ai_analysis(
+    run_id: int,
+    ts_code: str,
+    force_refresh: bool = Query(False, description="为 true 时忽略 AI 内存缓存并强制重算"),
+) -> CompanyAiAnalysisResponse:
     """
     详情页触发的 AI 分析：基于与 detail 同源的结构化上下文调用大模型；未启用或缺配置时返回 503。
     """
@@ -627,7 +702,7 @@ def company_ai_analysis(run_id: int, ts_code: str) -> CompanyAiAnalysisResponse:
 
     svc = CompanyAiAnalysisApplicationService(engine)
     try:
-        payload = svc.analyze(run_id, ts_code)
+        payload = svc.analyze(run_id, ts_code, force_refresh=force_refresh)
     except CompanyAiDetailError as exc:
         if exc.code == "run_not_found":
             raise HTTPException(status_code=404, detail="run 不存在") from exc
@@ -646,6 +721,61 @@ def company_ai_analysis(run_id: int, ts_code: str) -> CompanyAiAnalysisResponse:
     return CompanyAiAnalysisResponse.model_validate(payload)
 
 
+@router.post(
+    "/runs/{run_id}/companies/{ts_code}/investment-quality",
+    response_model=CompanyInvestmentQualityResponse,
+)
+def company_investment_quality(run_id: int, ts_code: str) -> CompanyInvestmentQualityResponse:
+    """
+    详情页触发的投资质量计算：基于该 run 的冻结结果事实(run_fact_json)计算，避免与当前详情上下文脱节。
+    """
+
+    try:
+        engine = get_engine()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    repo = ScreeningRepository(engine)
+    ranking = CombinedRankingParams.from_env()
+    code = to_ts_code(ts_code)
+    with engine.connect() as conn:
+        run = repo.get_run(conn, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run 不存在")
+        row = repo.get_result_row_for_run_symbol(conn, run_id, code, ranking=ranking)
+        hydrated_run_fact: dict[str, Any] = {}
+        hydrated_industry: str | None = None
+        if row is not None:
+            hydrated_run_fact, hydrated_industry = hydrate_run_fact_from_db(
+                conn=conn,
+                ts_code=code,
+                row=row,
+            )
+    if row is None:
+        raise HTTPException(status_code=404, detail="该 run 中无此标的")
+    if not hydrated_industry:
+        raise HTTPException(status_code=422, detail="投资质量计算缺少关键数据: industry")
+    missing_pre = missing_required_iq_fields(hydrated_run_fact)
+    if missing_pre:
+        hydrated_run_fact = enrich_run_fact_from_provider_snapshot(code, hydrated_run_fact)
+        missing_pre = missing_required_iq_fields(hydrated_run_fact)
+    if missing_pre:
+        raise HTTPException(
+            status_code=422,
+            detail=f"投资质量计算缺少关键数据: {', '.join(missing_pre)}",
+        )
+    analyzer = InvestmentQualityAnalyzer()
+    row_for_iq = dict(row)
+    if hydrated_run_fact:
+        row_for_iq["run_fact_json"] = hydrated_run_fact
+    row_for_iq["industry"] = hydrated_industry
+    decorated = attach_investment_quality_for_result_row(analyzer, row_for_iq)
+    iq = decorated.get("investment_quality")
+    if not isinstance(iq, dict):
+        raise HTTPException(status_code=500, detail="投资质量结果缺失")
+    symbol = str(decorated.get("symbol") or ts_code).strip()
+    return CompanyInvestmentQualityResponse(symbol=symbol, investment_quality=iq)
+
+
 @router.get("/runs/{run_id}/result-industries", response_model=RunIndustriesResponse)
 def list_run_industries(run_id: int) -> RunIndustriesResponse:
     """当前 run 结果集中出现的去重行业，供筛选下拉；空参考行业为 `__EMPTY__`。"""
@@ -660,6 +790,22 @@ def list_run_industries(run_id: int) -> RunIndustriesResponse:
             raise HTTPException(status_code=404, detail="run 不存在")
         industries = repo.list_distinct_industries_for_run(conn, run_id)
     return RunIndustriesResponse(industries=industries)
+
+
+@router.get("/runs/{run_id}/result-iq-decisions", response_model=RunIqDecisionsResponse)
+def list_run_iq_decisions(run_id: int) -> RunIqDecisionsResponse:
+    """当前 run 结果集中已落库的价值质量结论（去重），供筛选下拉。"""
+
+    try:
+        engine = get_engine()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    repo = ScreeningRepository(engine)
+    with engine.connect() as conn:
+        if repo.get_run(conn, run_id) is None:
+            raise HTTPException(status_code=404, detail="run 不存在")
+        values = repo.list_distinct_iq_decisions_for_run(conn, run_id)
+    return RunIqDecisionsResponse(iq_decisions=values)
 
 
 @router.get("/runs/{run_id}/results", response_model=PagedResults)
@@ -712,6 +858,10 @@ def paged_results(
         le=100.0,
         description="股息率上限（单位百分点）",
     ),
+    iq_decision: Annotated[
+        list[str] | None,
+        Query(description="价值质量结论多选 OR：buy/watchlist/cautious/reject；未落库用 __IQ_EMPTY__"),
+    ] = None,
 ) -> PagedResults:
     try:
         engine = get_engine()
@@ -751,6 +901,10 @@ def paged_results(
     )
     if vfp:
         fp_parts.append(vfp)
+    iq_list = list(iq_decision) if iq_decision else []
+    iq_fp = iq_decisions_cache_fingerprint(iq_list)
+    if iq_fp:
+        fp_parts.append(iq_fp)
     fp_merged = "|".join(fp_parts) if fp_parts else ""
     ck = cache_key(run_id, page, page_size, sort, order, filter_fingerprint=fp_merged)
     ttl = cache_ttl_seconds()
@@ -784,6 +938,7 @@ def paged_results(
             market_cap_max=market_cap_max,
             dividend_yield_min=dividend_yield_min,
             dividend_yield_max=dividend_yield_max,
+            iq_decisions=iq_list if iq_list else None,
         )
 
     enriched = [enrich_screening_result_row(x) for x in page_data.items]

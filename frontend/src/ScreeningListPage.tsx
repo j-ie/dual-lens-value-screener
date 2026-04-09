@@ -48,6 +48,9 @@ type PagedItem = {
   market_cap?: number | null;
   dv_ratio?: number | null;
   dv_ttm?: number | null;
+  investment_quality?: Record<string, unknown> | null;
+  iq_decision?: string | null;
+  iq_decision_label_zh?: string | null;
 };
 
 type Paged = {
@@ -112,6 +115,17 @@ function formatDividendYieldPreferred(
 
 /** 与后端 INDUSTRY_EMPTY_QUERY_VALUE 一致 */
 const INDUSTRY_EMPTY = "__EMPTY__";
+/** 与后端 IQ_DECISION_EMPTY_QUERY_VALUE 一致：批跑未写入价值质量结论 */
+const IQ_DECISION_EMPTY = "__IQ_EMPTY__";
+
+/** Facet 未就绪时仍可选，与服务端 `iq_decision` 一致 */
+const IQ_DECISION_FILTER_FALLBACK: { value: string; label: string }[] = [
+  { value: IQ_DECISION_EMPTY, label: "（未计算/旧 Run）" },
+  { value: "buy", label: "可买" },
+  { value: "watchlist", label: "跟踪" },
+  { value: "cautious", label: "谨慎" },
+  { value: "reject", label: "排除" },
+];
 
 function parseSortKey(combo: string): {
   sort:
@@ -187,6 +201,8 @@ export default function ScreeningListPage() {
   const [marketCapMaxYi, setMarketCapMaxYi] = useState<number | null>(null);
   const [divYieldMin, setDivYieldMin] = useState<number | null>(null);
   const [divYieldMax, setDivYieldMax] = useState<number | null>(null);
+  const [selectedIqDecisions, setSelectedIqDecisions] = useState<string[]>([]);
+  const [iqDecisionOptions, setIqDecisionOptions] = useState<{ value: string; label: string }[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadRuns = useCallback(async () => {
@@ -242,6 +258,9 @@ export default function ScreeningListPage() {
       if (divYieldMax !== null && Number.isFinite(divYieldMax) && divYieldMax >= 0) {
         q.set("dividend_yield_max", String(divYieldMax));
       }
+      for (const iqd of selectedIqDecisions) {
+        q.append("iq_decision", iqd);
+      }
       const res = await fetch(`/api/v1/runs/${runId}/results?${q.toString()}`);
       if (!res.ok) {
         throw new Error(await res.text());
@@ -266,7 +285,41 @@ export default function ScreeningListPage() {
     marketCapMaxYi,
     divYieldMin,
     divYieldMax,
+    selectedIqDecisions,
   ]);
+
+  const loadIqDecisionFacets = useCallback(async () => {
+    if (runId === null) {
+      setIqDecisionOptions([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/v1/runs/${runId}/result-iq-decisions`);
+      if (!res.ok) {
+        return;
+      }
+      const body = (await res.json()) as { iq_decisions: string[] };
+      const labelFor = (v: string) => {
+        if (v === IQ_DECISION_EMPTY) {
+          return "（未计算/旧 Run）";
+        }
+        const map: Record<string, string> = {
+          buy: "可买",
+          watchlist: "跟踪",
+          cautious: "谨慎",
+          reject: "排除",
+        };
+        return map[v] ?? v;
+      };
+      const opts = (body.iq_decisions ?? []).map((v) => ({
+        value: v,
+        label: labelFor(v),
+      }));
+      setIqDecisionOptions(opts);
+    } catch {
+      setIqDecisionOptions([]);
+    }
+  }, [runId]);
 
   const loadIndustryFacets = useCallback(async () => {
     if (runId === null) {
@@ -381,6 +434,10 @@ export default function ScreeningListPage() {
   }, [loadIndustryFacets]);
 
   useEffect(() => {
+    void loadIqDecisionFacets();
+  }, [loadIqDecisionFacets]);
+
+  useEffect(() => {
     void loadPage();
   }, [loadPage]);
 
@@ -424,6 +481,18 @@ export default function ScreeningListPage() {
         key: "dividend_yield",
         width: 100,
         render: (_: unknown, row) => formatDividendYieldPreferred(row.dv_ttm, row.dv_ratio),
+      },
+      {
+        title: "价值判断",
+        key: "iq_label",
+        width: 96,
+        ellipsis: true,
+        render: (_: unknown, row) =>
+          row.iq_decision_label_zh
+            ? String(row.iq_decision_label_zh)
+            : row.iq_decision
+              ? String(row.iq_decision)
+              : EMPTY,
       },
       {
         title: "巴菲特分（规则）",
@@ -522,6 +591,13 @@ export default function ScreeningListPage() {
 
   const selectedRun = runs.find((r) => r.id === runId);
 
+  const iqDecisionSelectOptions = useMemo(() => {
+    if (iqDecisionOptions.length > 0) {
+      return iqDecisionOptions;
+    }
+    return IQ_DECISION_FILTER_FALLBACK;
+  }, [iqDecisionOptions]);
+
   return (
     <div>
       <Typography.Title level={3} className="vs-page-heading">
@@ -566,6 +642,7 @@ export default function ScreeningListPage() {
                   setRunId(v);
                   setPage(1);
                   setSelectedIndustries([]);
+                  setSelectedIqDecisions([]);
                   setCompanyNameQ("");
                   setMarketCapMinYi(null);
                   setMarketCapMaxYi(null);
@@ -657,8 +734,8 @@ export default function ScreeningListPage() {
             </div>
           </div>
           <div className="vs-filter-row">
-            <div className="vs-filter-label">AI 与排序</div>
-            <div className="vs-filter-controls">
+            <div className="vs-filter-label">AI · 价值 · 排序</div>
+            <div className="vs-filter-controls" style={{ flexWrap: "wrap", gap: 8 }}>
               <Checkbox
                 checked={hasAiOnly}
                 onChange={(e) => {
@@ -680,7 +757,20 @@ export default function ScreeningListPage() {
                 }}
               />
               <Select
-                style={{ minWidth: 240 }}
+                mode="multiple"
+                allowClear
+                placeholder="价值判断（可买/跟踪/谨慎/排除）"
+                style={{ minWidth: 220, maxWidth: "100%", flex: "1 1 220px" }}
+                value={selectedIqDecisions}
+                options={iqDecisionSelectOptions}
+                maxTagCount="responsive"
+                onChange={(v) => {
+                  setSelectedIqDecisions(v);
+                  setPage(1);
+                }}
+              />
+              <Select
+                style={{ minWidth: 240, maxWidth: "100%", flex: "1 1 240px" }}
                 value={sortCombo}
                 options={SORT_OPTIONS}
                 onChange={(v) => {

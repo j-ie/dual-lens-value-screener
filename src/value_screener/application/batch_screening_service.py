@@ -4,7 +4,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.engine import Engine
+
 from value_screener.application.screening_service import ScreeningApplicationService
+from value_screener.infrastructure.reference_repository import ReferenceMasterRepository
 from value_screener.domain.snapshot import StockFinancialSnapshot
 from value_screener.infrastructure.fetch_types import SymbolFetchFailure
 
@@ -40,9 +43,12 @@ class BatchScreeningApplicationService:
         self,
         provider: FinancialDataProvider,
         screening: ScreeningApplicationService,
+        *,
+        screening_engine: Engine | None = None,
     ) -> None:
         self._provider = provider
         self._screening = screening
+        self._screening_engine = screening_engine
 
     def run(
         self,
@@ -59,6 +65,12 @@ class BatchScreeningApplicationService:
             symbols = self._provider.list_universe()
         if max_symbols is not None and max_symbols > 0:
             symbols = symbols[:max_symbols]
+
+        industry_map: dict[str, str] = {}
+        if self._screening_engine is not None and symbols:
+            ref = ReferenceMasterRepository(self._screening_engine)
+            with self._screening_engine.connect() as conn:
+                industry_map = ref.fetch_industry_map(conn, symbols)
 
         total_syms = len(symbols)
         use_chunks = (
@@ -116,7 +128,7 @@ class BatchScreeningApplicationService:
                     }
                 )
 
-            screened = self._screening.screen(snaps)
+            screened = self._screening.screen(snaps, industry_by_symbol=industry_map)
             all_screened.extend(screened)
             all_snaps_ordered.extend(snaps)
             if use_chunks and screened:

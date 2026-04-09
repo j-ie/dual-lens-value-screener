@@ -98,3 +98,18 @@ class ReferenceMasterRepository:
             return None
         got = self.fetch_by_ts_codes(conn, [code])
         return got.get(code)
+
+    def fetch_industry_map(self, conn: Connection, ts_codes: Sequence[str]) -> dict[str, str]:
+        """批跑用：ts_code → industry（主数据无行业则为空串）。大单 IN 分块避免超长 SQL。"""
+
+        codes = [str(c).strip() for c in ts_codes if c and str(c).strip()]
+        if not codes:
+            return {}
+        out: dict[str, str] = {}
+        chunk = 900
+        for i in range(0, len(codes), chunk):
+            part = codes[i : i + chunk]
+            rows = self.fetch_by_ts_codes(conn, part)
+            for ts, row in rows.items():
+                out[ts] = str(row.get("industry") or "").strip()
+        return out

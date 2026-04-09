@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy.engine import Engine
 
-from value_screener.application.financial_statement_payload import to_float_or_none
+from value_screener.application.financial_statement_payload import investing_cashflow_net_from_row, to_float_or_none
 from value_screener.application.financial_statement_window import (
     end_date_in_window,
     statement_api_date_bounds,
@@ -61,7 +61,7 @@ def dcf_financials_need_tushare_refresh(
     if any(to_float_or_none(r.get("n_cashflow_act")) is None for r in sample):
         return True
 
-    if all(to_float_or_none(r.get("n_cash_flows_inv_act")) is None for r in sample):
+    if all(investing_cashflow_net_from_row(r) is None for r in sample):
         return True
 
     bal0 = _sort_by_end_date_desc([dict(x) for x in balance_rows])[0]
