@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy.engine import Engine
 
+from value_screener.application.financial_statement_window import DEFAULT_FINANCIAL_PERIODS_LIMIT
 from value_screener.application.result_enrichment import enrich_screening_result_row
 from value_screener.domain.combined_ranking_params import CombinedRankingParams
 from value_screener.domain.ts_code_format import is_valid_ts_code
@@ -155,7 +156,7 @@ class CompanyDetailQueryService:
         ts_code: str,
         *,
         include_financial_payload: bool = False,
-        financial_limit: int = 12,
+        financial_limit: int = DEFAULT_FINANCIAL_PERIODS_LIMIT,
         include_dcf: bool = False,
         dcf_wacc: float | None = None,
         dcf_stage1_growth: float | None = None,
@@ -203,7 +204,9 @@ class CompanyDetailQueryService:
             and dcf_financials_need_tushare_refresh(
                 cashflow,
                 balance,
-                scan_cashflow_head=max(12, dcf_settings.ttm_periods_max * 3),
+                scan_cashflow_head=max(
+                    DEFAULT_FINANCIAL_PERIODS_LIMIT, dcf_settings.ttm_periods_max * 3
+                ),
             )
         ):
             try:
@@ -282,6 +285,7 @@ class CompanyDetailQueryService:
                     fetch_total_shares=_fetch_shares,
                     industry=(enriched.get("industry") or None),
                     income_rows=inc_for_dcf,
+                    ts_code=code,
                 )
 
         out: dict[str, Any] = {

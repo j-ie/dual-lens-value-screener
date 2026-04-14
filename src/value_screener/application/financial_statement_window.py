@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+# 与默认同步窗口 `statement_api_date_bounds(since_years=5)` 下「满季报」规模一致（约 5×4 个报告期）。
+DEFAULT_FINANCIAL_PERIODS_LIMIT = 20
 
-def statement_api_date_bounds(*, since_years: int = 3, today: date | None = None) -> tuple[str, str]:
+
+def statement_api_date_bounds(*, since_years: int = 5, today: date | None = None) -> tuple[str, str]:
     """
     TuShare `start_date` / `end_date`（YYYYMMDD）：从 (今年 - since_years) 年 1 月 1 日起至今天。
     """

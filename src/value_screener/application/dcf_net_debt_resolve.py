@@ -104,6 +104,25 @@ def resolve_net_debt_for_sector(
         net = float(total_liab) - money_v
         return net, "real_estate_total_liab_minus_money_cap_fallback", warnings
 
+    if sector_kind is DcfSectorKind.GENERAL:
+        gross, found = _sum_financial_interest_bearing_debt(latest)
+        if found:
+            net = gross - money_v
+            warnings.append(
+                "一般工商业：净债务采用有息类科目合计 − 货币资金（粗代理）；"
+                "若报表未披露完整有息负债，仍可能偏离真实净金融负债"
+            )
+            return net, "general_interest_bearing_minus_money_cap", warnings
+        total_liab = to_float_or_none(latest.get("total_liab"))
+        if total_liab is None:
+            return None, None, ["资产负债表缺少 total_liab，无法估算净债务"]
+        net = float(total_liab) - money_v
+        warnings.append(
+            "一般工商业未识别到有息负债明细科目，净债务回退为 total_liab − money_cap 粗代理，"
+            "非精确有息净负债"
+        )
+        return net, "total_liab_minus_money_cap", warnings
+
     total_liab = to_float_or_none(latest.get("total_liab"))
     if total_liab is None:
         return None, None, ["资产负债表缺少 total_liab，无法估算净债务"]

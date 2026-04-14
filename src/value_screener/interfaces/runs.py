@@ -19,6 +19,7 @@ from value_screener.application.company_ai_analysis import (
     CompanyAiUpstreamError,
 )
 from value_screener.application.company_detail_query import CompanyDetailQueryService
+from value_screener.application.financial_statement_window import DEFAULT_FINANCIAL_PERIODS_LIMIT
 from value_screener.application.investment_quality_run_context import (
     enrich_run_fact_from_provider_snapshot,
     hydrate_run_fact_from_db,
@@ -614,7 +615,12 @@ def company_detail(
     run_id: int,
     ts_code: str,
     include_financial_payload: bool = Query(False, description="为 true 时财报行附带 payload JSON"),
-    financial_limit: int = Query(12, ge=1, le=48, description="每表最多返回的报告期条数"),
+    financial_limit: int = Query(
+        DEFAULT_FINANCIAL_PERIODS_LIMIT,
+        ge=1,
+        le=48,
+        description="每表最多返回的报告期条数（默认与近 5 年季报窗口对齐）",
+    ),
     include_dcf: bool = Query(False, description="为 true 时计算并返回 dcf（需启用 VALUE_SCREENER_DCF_ENABLED）"),
     include_persisted_ai: bool = Query(
         False,

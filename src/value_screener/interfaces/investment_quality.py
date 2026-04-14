@@ -133,7 +133,9 @@ def analyze_single(req: SingleAnalyzeRequest) -> SingleAnalyzeResponse:
                 detail=f"拉取 {code} 快照失败: {first.reason}",
             )
         snap = first
-    iq = build_investment_quality_from_snapshot(analyzer, snap, industry=req.industry)
+    iq = build_investment_quality_from_snapshot(
+        analyzer, snap, industry=req.industry, ts_code=snap.symbol
+    )
     return SingleAnalyzeResponse(symbol=snap.symbol, investment_quality=iq)
 
 

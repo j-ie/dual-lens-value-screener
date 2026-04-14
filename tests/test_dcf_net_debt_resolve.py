@@ -15,6 +15,19 @@ class DcfNetDebtResolveTest(unittest.TestCase):
         self.assertEqual(net, 300.0)
         self.assertEqual(method, "total_liab_minus_money_cap")
 
+    def test_general_prefers_interest_bearing_when_present(self) -> None:
+        rows = [
+            {
+                "end_date": "20231231",
+                "total_liab": 5000.0,
+                "money_cap": 100.0,
+                "payload": {"st_borr": 80.0, "lt_borr": 120.0},
+            }
+        ]
+        net, method, _w = resolve_net_debt_for_sector(rows, DcfSectorKind.GENERAL)
+        self.assertEqual(net, 100.0)
+        self.assertEqual(method, "general_interest_bearing_minus_money_cap")
+
     def test_financial_sums_payload_fields(self) -> None:
         rows = [
             {

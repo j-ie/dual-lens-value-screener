@@ -6,10 +6,9 @@ import dataclasses
 import unittest
 from datetime import date
 
-from value_screener.application.dcf_company_valuation import (
-    aggregate_ocf_and_capex_proxy_ttm,
-    build_company_dcf_payload,
-)
+from value_screener.application.dcf_cashflow_aggregate import aggregate_ocf_and_capex_proxy_ttm
+from value_screener.application.dcf_company_valuation import build_company_dcf_payload
+from value_screener.domain.dcf import DCF_MODEL_REVISION
 from value_screener.infrastructure.settings import DcfValuationSettings
 
 
@@ -18,6 +17,11 @@ _DCF_BASE = DcfValuationSettings(
     default_wacc=0.10,
     default_stage1_growth=0.0,
     default_terminal_growth=0.02,
+    default_cyclical_stage1_growth=0.015,
+    default_cyclical_terminal_growth=0.02,
+    infer_stage1_enabled=False,
+    infer_stage1_max_annuals=5,
+    infer_stage1_min_span_years=1,
     forecast_years=2,
     wacc_terminal_epsilon=0.0005,
     ttm_periods_max=4,
@@ -118,6 +122,8 @@ class BuildCompanyDcfPayloadTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertIsNotNone(payload["values"])
         assert payload["values"] is not None
+        assert payload["assumptions"] is not None
+        self.assertEqual(payload["assumptions"]["dcf_model_revision"], DCF_MODEL_REVISION)
         self.assertIn("value_per_share", payload["values"])
         # 基期 FCF=80（100 经营 − 20 投资流出代理），净债务 0，股本 1e6
         self.assertAlmostEqual(payload["values"]["value_per_share"], 0.0009826446, places=5)
@@ -233,6 +239,151 @@ class BuildCompanyDcfPayloadTest(unittest.TestCase):
         assert p1["values"] and p2["values"] and p1["assumptions"] and p2["assumptions"]
         self.assertAlmostEqual(float(p2["assumptions"]["base_fcf"]), float(p1["assumptions"]["base_fcf"]) * 0.5)
         self.assertAlmostEqual(float(p2["values"]["equity_value"]), float(p1["values"]["equity_value"]) * 0.5, delta=1.0)
+
+    def test_cyclical_uses_conservative_defaults(self) -> None:
+        base = _dcf_settings(default_stage1_growth=0.02, default_terminal_growth=0.025)
+        cf = [{"end_date": "20231231", "n_cashflow_act": 100.0, "n_cash_flows_inv_act": None}]
+        bal = [{"end_date": "20231231", "total_liab": 100.0, "money_cap": 100.0}]
+        payload = build_company_dcf_payload(
+            cashflow_rows=cf,
+            balance_rows=bal,
+            settings=base,
+            wacc_override=None,
+            stage1_override=None,
+            terminal_override=None,
+            fetch_total_shares=lambda: 1_000_000.0,
+            industry="煤炭开采",
+        )
+        self.assertTrue(payload["ok"])
+        assert payload["assumptions"] is not None
+        self.assertEqual(payload["assumptions"]["dcf_sector_kind"], "cyclical")
+        self.assertLessEqual(payload["assumptions"]["stage1_growth"], base.default_stage1_growth)
+        self.assertLessEqual(payload["assumptions"]["terminal_growth"], base.default_terminal_growth)
+        self.assertEqual(payload["assumptions"]["stage1_growth"], 0.015)
+        self.assertEqual(payload["assumptions"]["terminal_growth"], 0.02)
+        self.assertTrue(any("强周期" in n for n in payload["notes"]))
+        self.assertTrue(payload["assumptions"].get("industry_explicit_map_hit"))
+
+    def test_cyclical_respects_stage_override(self) -> None:
+        base = _dcf_settings()
+        cf = [{"end_date": "20231231", "n_cashflow_act": 100.0, "n_cash_flows_inv_act": None}]
+        bal = [{"end_date": "20231231", "total_liab": 100.0, "money_cap": 100.0}]
+        payload = build_company_dcf_payload(
+            cashflow_rows=cf,
+            balance_rows=bal,
+            settings=base,
+            wacc_override=None,
+            stage1_override=0.05,
+            terminal_override=None,
+            fetch_total_shares=lambda: 1_000_000.0,
+            industry="煤炭开采",
+        )
+        self.assertTrue(payload["ok"])
+        assert payload["assumptions"] is not None
+        self.assertEqual(payload["assumptions"]["stage1_growth"], 0.05)
+
+    def test_borderline_general_adds_warning(self) -> None:
+        base = _dcf_settings()
+        cf = [{"end_date": "20231231", "n_cashflow_act": 100.0, "n_cash_flows_inv_act": None}]
+        bal = [{"end_date": "20231231", "total_liab": 100.0, "money_cap": 100.0}]
+        payload = build_company_dcf_payload(
+            cashflow_rows=cf,
+            balance_rows=bal,
+            settings=base,
+            wacc_override=None,
+            stage1_override=None,
+            terminal_override=None,
+            fetch_total_shares=lambda: 1_000_000.0,
+            industry="运输设备",
+        )
+        self.assertTrue(payload["ok"])
+        self.assertTrue(any("边界" in w for w in payload["warnings"]))
+
+    def test_financial_infers_stage1_from_two_year_ni_when_enabled(self) -> None:
+        base = _dcf_settings(
+            infer_stage1_enabled=True,
+            default_stage1_growth=0.02,
+            default_terminal_growth=0.02,
+        )
+        cf = [{"end_date": "20231231", "n_cashflow_act": 1.0, "n_cash_flows_inv_act": None}]
+        inc = [
+            {"end_date": "20221231", "n_income_attr_p": 100.0, "report_type": "1"},
+            {"end_date": "20231231", "n_income_attr_p": 110.0, "report_type": "1"},
+        ]
+        bal = [
+            {
+                "end_date": "20231231",
+                "total_liab": 1e6,
+                "money_cap": 0.0,
+                "payload": {"st_borrow": 1.0, "lt_borrow": 1.0},
+            }
+        ]
+        payload = build_company_dcf_payload(
+            cashflow_rows=cf,
+            balance_rows=bal,
+            settings=base,
+            wacc_override=None,
+            stage1_override=None,
+            terminal_override=None,
+            fetch_total_shares=lambda: 1_000_000.0,
+            industry="银行",
+            income_rows=inc,
+        )
+        self.assertTrue(payload["ok"])
+        assert payload["assumptions"] is not None
+        self.assertEqual(payload["assumptions"]["stage1_growth_source"], "inferred_net_income_cagr")
+        self.assertAlmostEqual(float(payload["assumptions"]["stage1_growth"]), 0.1, places=6)
+
+    def test_real_estate_contract_liab_payload(self) -> None:
+        """地产股：合同负债从负债代理中扣除；净债务方法与 EV→E 一致（合成数据）。"""
+        base = _dcf_settings()
+        cf = [{"end_date": "20231231", "n_cashflow_act": 100.0, "n_cash_flows_inv_act": -20.0}]
+        bal = [
+            {
+                "end_date": "20231231",
+                "total_liab": 1000.0,
+                "money_cap": 50.0,
+                "payload": {"contract_liab": 400.0},
+            }
+        ]
+        payload = build_company_dcf_payload(
+            cashflow_rows=cf,
+            balance_rows=bal,
+            settings=base,
+            wacc_override=None,
+            stage1_override=None,
+            terminal_override=None,
+            fetch_total_shares=lambda: 1_000_000.0,
+            industry="全国地产",
+        )
+        self.assertTrue(payload["ok"])
+        assert payload["assumptions"] is not None
+        self.assertEqual(
+            payload["assumptions"]["net_debt_method"],
+            "real_estate_liab_minus_contract_liab_minus_cash",
+        )
+        self.assertEqual(payload["assumptions"]["dcf_model_revision"], DCF_MODEL_REVISION)
+        self.assertAlmostEqual(float(payload["assumptions"]["net_debt"]), 550.0, places=3)
+        assert payload["values"] is not None
+        self.assertGreater(float(payload["values"]["value_per_share"]), 0.0)
+
+    def test_invalid_params_assumptions_carry_model_revision(self) -> None:
+        base = _dcf_settings()
+        payload = build_company_dcf_payload(
+            cashflow_rows=[
+                {"end_date": "20231231", "n_cashflow_act": 50.0, "n_cash_flows_inv_act": None},
+            ],
+            balance_rows=[{"end_date": "20231231", "total_liab": 100.0, "money_cap": 100.0}],
+            settings=base,
+            wacc_override=0.03,
+            stage1_override=None,
+            terminal_override=0.05,
+            fetch_total_shares=lambda: 1.0,
+        )
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["skip_reason"], "invalid_params")
+        assert payload["assumptions"] is not None
+        self.assertEqual(payload["assumptions"]["dcf_model_revision"], DCF_MODEL_REVISION)
 
 
 if __name__ == "__main__":

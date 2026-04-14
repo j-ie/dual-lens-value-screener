@@ -165,6 +165,8 @@ class DcfValuationSettings:
     default_wacc: float
     default_stage1_growth: float
     default_terminal_growth: float
+    default_cyclical_stage1_growth: float
+    default_cyclical_terminal_growth: float
     forecast_years: int
     wacc_terminal_epsilon: float
     ttm_periods_max: int
@@ -178,16 +180,27 @@ class DcfValuationSettings:
     terminal_g_max: float
     daily_basic_timeout_seconds: float
     financial_ni_base_scale: float
+    infer_stage1_enabled: bool
+    infer_stage1_max_annuals: int
+    infer_stage1_min_span_years: int
 
     @classmethod
     def from_env(cls) -> DcfValuationSettings:
         fin_scale_raw = _env_float_default("VALUE_SCREENER_DCF_FINANCIAL_NI_BASE_SCALE", 0.35)
         fin_scale = max(0.15, min(1.0, fin_scale_raw))
+        infer_raw = os.environ.get("VALUE_SCREENER_DCF_INFER_STAGE1", "").strip().lower()
+        infer_on = infer_raw not in {"0", "false", "no", "off"}
         return cls(
             enabled=_env_truthy("VALUE_SCREENER_DCF_ENABLED"),
             default_wacc=_env_float_default("VALUE_SCREENER_DCF_WACC", 0.09),
             default_stage1_growth=_env_float_default("VALUE_SCREENER_DCF_STAGE1_GROWTH", 0.02),
             default_terminal_growth=_env_float_default("VALUE_SCREENER_DCF_TERMINAL_GROWTH", 0.025),
+            default_cyclical_stage1_growth=_env_float_default(
+                "VALUE_SCREENER_DCF_CYCLICAL_STAGE1_GROWTH", 0.015
+            ),
+            default_cyclical_terminal_growth=_env_float_default(
+                "VALUE_SCREENER_DCF_CYCLICAL_TERMINAL_GROWTH", 0.02
+            ),
             forecast_years=max(1, min(_env_int_default("VALUE_SCREENER_DCF_FORECAST_YEARS", 5), 20)),
             wacc_terminal_epsilon=max(1e-6, _env_float_default("VALUE_SCREENER_DCF_WACC_TERMINAL_EPSILON", 0.0005)),
             ttm_periods_max=max(1, min(_env_int_default("VALUE_SCREENER_DCF_TTM_PERIODS", 4), 12)),
@@ -203,6 +216,13 @@ class DcfValuationSettings:
                 1.0, _env_float_default("VALUE_SCREENER_DCF_DAILY_BASIC_TIMEOUT_SECONDS", 12.0)
             ),
             financial_ni_base_scale=fin_scale,
+            infer_stage1_enabled=infer_on,
+            infer_stage1_max_annuals=max(
+                2, min(_env_int_default("VALUE_SCREENER_DCF_INFER_STAGE1_MAX_ANNUALS", 5), 20)
+            ),
+            infer_stage1_min_span_years=max(
+                1, min(_env_int_default("VALUE_SCREENER_DCF_INFER_STAGE1_MIN_SPAN_YEARS", 1), 10)
+            ),
         )
 
     def clamp_wacc(self, v: float) -> float:

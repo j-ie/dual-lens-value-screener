@@ -12,6 +12,7 @@ from sqlalchemy.engine import Engine
 
 from value_screener.application.financial_statement_payload import investing_cashflow_net_from_row, to_float_or_none
 from value_screener.application.financial_statement_window import (
+    DEFAULT_FINANCIAL_PERIODS_LIMIT,
     end_date_in_window,
     statement_api_date_bounds,
     utc_now,
@@ -44,7 +45,7 @@ def dcf_financials_need_tushare_refresh(
     cashflow_rows: list[dict[str, Any]],
     balance_rows: list[dict[str, Any]],
     *,
-    scan_cashflow_head: int = 12,
+    scan_cashflow_head: int = DEFAULT_FINANCIAL_PERIODS_LIMIT,
 ) -> bool:
     """
     判断是否有必要为 DCF 触发 TuShare 同步。

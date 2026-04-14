@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.engine import Engine
 
 from value_screener.application.financial_statement_payload import merge_core_columns_with_payload
+from value_screener.application.financial_statement_window import DEFAULT_FINANCIAL_PERIODS_LIMIT
 from value_screener.application.investment_quality_view import attach_investment_quality_for_result_row
 from value_screener.application.result_enrichment import enrich_screening_result_row
 from value_screener.domain.combined_ranking_params import CombinedRankingParams
@@ -192,7 +193,7 @@ def merge_tushare_balancesheet_into_run_fact(
                 "oth_payable,non_cur_liab_due_1y,oth_cur_liab,st_bonds_payable,st_fin_payable,"
                 "contract_liab"
             ),
-            limit=12,
+            limit=DEFAULT_FINANCIAL_PERIODS_LIMIT,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("investment_quality tushare balancesheet %s: %s", ts_code, exc)

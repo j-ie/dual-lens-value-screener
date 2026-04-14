@@ -68,8 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     sync_fs.add_argument(
         "--since-years",
         type=int,
-        default=3,
-        help="报告期窗口：从当前年起向前 since_years 个日历年（默认 3）",
+        default=5,
+        help="报告期窗口：从当前年起向前 since_years 个日历年（默认 5）",
     )
     sync_fs.add_argument(
         "--scheduled-date",

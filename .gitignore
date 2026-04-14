@@ -13,3 +13,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.egg-info/
+
+# OpenSpec：已归档变更与合并到主树的 spec（本地工作流产物，非运行时依赖）
+openspec/changes/archive/
+openspec/specs/

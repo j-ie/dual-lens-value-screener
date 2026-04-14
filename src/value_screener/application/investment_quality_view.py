@@ -35,6 +35,7 @@ def build_investment_quality_from_snapshot(
     snap: StockFinancialSnapshot,
     *,
     industry: str | None = None,
+    ts_code: str | None = None,
 ) -> dict[str, Any]:
     pe: float | None = None
     pb: float | None = None
@@ -68,7 +69,7 @@ def build_investment_quality_from_snapshot(
     result = analyzer.analyze(
         CompanyFinancials(
             name=snap.symbol,
-            sector_kind=resolve_dcf_sector_kind(industry),
+            sector_kind=resolve_dcf_sector_kind(industry, ts_code=ts_code),
             revenue=(float(snap.revenue_ttm),) if snap.revenue_ttm is not None else (),
             net_profit=(float(snap.net_income_ttm),) if snap.net_income_ttm is not None else (),
             non_recurring_net_profit=(float(snap.net_income_ttm),) if snap.net_income_ttm is not None else (),
@@ -144,6 +145,10 @@ def attach_investment_quality_for_result_row(
         }
     )
     out = dict(row)
-    out["investment_quality"] = build_investment_quality_from_snapshot(analyzer, snap, industry=industry)
+    sym = row.get("symbol")
+    ts_c = str(sym).strip() if sym else None
+    out["investment_quality"] = build_investment_quality_from_snapshot(
+        analyzer, snap, industry=industry, ts_code=ts_c
+    )
     return out
 

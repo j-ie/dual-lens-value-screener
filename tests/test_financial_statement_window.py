@@ -15,6 +15,16 @@ class TestStatementApiDateBounds(unittest.TestCase):
         self.assertEqual(start, "20230101")
         self.assertEqual(end, "20260404")
 
+    def test_five_year_window_jan1_to_today(self) -> None:
+        start, end = statement_api_date_bounds(since_years=5, today=date(2026, 4, 4))
+        self.assertEqual(start, "20210101")
+        self.assertEqual(end, "20260404")
+
+    def test_default_since_years_matches_five_year_window(self) -> None:
+        start, end = statement_api_date_bounds(today=date(2026, 4, 4))
+        self.assertEqual(start, "20210101")
+        self.assertEqual(end, "20260404")
+
     def test_one_year(self) -> None:
         start, end = statement_api_date_bounds(since_years=1, today=date(2026, 12, 31))
         self.assertEqual(start, "20250101")

@@ -30,6 +30,7 @@ class ScreeningApplicationService:
             self._investment_quality,
             snap,
             industry=industry,
+            ts_code=snap.symbol,
         )
         prov: dict[str, object] = {
             "data_source": snap.data_source,

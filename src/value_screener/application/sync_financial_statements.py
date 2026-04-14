@@ -128,7 +128,7 @@ def sync_financial_statements_to_mysql(
     token: str,
     *,
     max_symbols: int | None = None,
-    since_years: int = 3,
+    since_years: int = 5,
     scheduled_date: date | None = None,
     resume: bool = True,
     reset_job: bool = False,

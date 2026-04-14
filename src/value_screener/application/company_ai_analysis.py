@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.engine import Engine
 
 from value_screener.application.company_detail_query import CompanyDetailQueryService
+from value_screener.application.financial_statement_window import DEFAULT_FINANCIAL_PERIODS_LIMIT
 from value_screener.application.investment_quality_run_context import (
     compute_investment_quality_for_run_symbol,
 )
@@ -241,7 +242,7 @@ class CompanyAiAnalysisApplicationService:
                 run_id,
                 ts_code,
                 include_financial_payload=False,
-                financial_limit=12,
+                financial_limit=DEFAULT_FINANCIAL_PERIODS_LIMIT,
                 include_dcf=True,
             )
         except ValueError as exc:

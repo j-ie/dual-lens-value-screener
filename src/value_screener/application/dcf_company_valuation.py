@@ -11,14 +11,20 @@ from typing import Any, Callable
 from value_screener.application.dcf_cashflow_aggregate import aggregate_ocf_and_capex_proxy_ttm
 from value_screener.application.dcf_income_for_valuation import latest_annual_n_income_attr_p
 from value_screener.application.dcf_net_debt_resolve import resolve_net_debt_for_sector
+from value_screener.application.dcf_stage1_growth_infer import infer_stage1_growth_from_annual_statements
 from value_screener.domain.dcf import (
+    DCF_MODEL_REVISION,
     DcfInputs,
     DcfResult,
     DcfSkipped,
     compute_dcf,
     dcf_result_to_public_dict,
 )
-from value_screener.domain.dcf_sector_policy import DcfSectorKind, resolve_dcf_sector_kind
+from value_screener.domain.dcf_sector_policy import (
+    DcfSectorKind,
+    is_dcf_borderline_industry,
+    resolve_dcf_sector_kind_detailed,
+)
 from value_screener.infrastructure.settings import DcfValuationSettings
 
 logger = logging.getLogger(__name__)
@@ -27,19 +33,30 @@ logger = logging.getLogger(__name__)
 def resolve_effective_dcf_params(
     base: DcfValuationSettings,
     *,
+    sector_kind: DcfSectorKind = DcfSectorKind.GENERAL,
     wacc_override: float | None,
     stage1_override: float | None,
     terminal_override: float | None,
+    stage1_inferred_raw: float | None = None,
 ) -> tuple[float, float, float, int, float] | str:
     """
     合并环境默认与查询覆盖（已钳制）。
 
+    强周期行业在未覆盖 stage/terminal 时使用更保守的默认增长。
+    未传 stage1 查询参数时可将 `stage1_inferred_raw` 设为由财报 CAGR 粗算值（再与行业默认择优已由调用方处理）。
     返回 (wacc, stage1, terminal, years, epsilon) 或错误信息字符串（422 用）。
     """
 
+    d1 = base.default_stage1_growth
+    dt = base.default_terminal_growth
+    if sector_kind is DcfSectorKind.CYCLICAL:
+        d1 = base.default_cyclical_stage1_growth
+        dt = base.default_cyclical_terminal_growth
+    if stage1_override is None and stage1_inferred_raw is not None:
+        d1 = base.clamp_stage1(float(stage1_inferred_raw))
     w = base.clamp_wacc(wacc_override if wacc_override is not None else base.default_wacc)
-    g1 = base.clamp_stage1(stage1_override if stage1_override is not None else base.default_stage1_growth)
-    gt = base.clamp_terminal(terminal_override if terminal_override is not None else base.default_terminal_growth)
+    g1 = base.clamp_stage1(stage1_override if stage1_override is not None else d1)
+    gt = base.clamp_terminal(terminal_override if terminal_override is not None else dt)
     eps = base.wacc_terminal_epsilon
     if w <= gt + eps:
         return (
@@ -59,6 +76,7 @@ def build_company_dcf_payload(
     fetch_total_shares: Callable[[], float],
     industry: str | None = None,
     income_rows: list[dict[str, Any]] | None = None,
+    ts_code: str | None = None,
 ) -> dict[str, Any]:
     """
     构建可 JSON 化的 DCF 块（ok=true/false）。
@@ -67,7 +85,12 @@ def build_company_dcf_payload(
     """
 
     warnings: list[str] = []
-    sector_kind = resolve_dcf_sector_kind(industry)
+    sector_kind, industry_explicit_hit = resolve_dcf_sector_kind_detailed(industry, ts_code=ts_code)
+    label_industry = (industry or "").strip()
+    industry_fields: dict[str, Any] = {
+        "tushare_industry": label_industry or None,
+        "industry_explicit_map_hit": industry_explicit_hit,
+    }
     notes: list[str] = [
         "简化 FCFF：基期优先取最近年报全年或四季度单季还原 TTM，再减投资现金流出代理；"
         "折现率为单一路径 WACC；不构成投资建议。",
@@ -83,12 +106,52 @@ def build_company_dcf_payload(
         notes.append(
             "地产股：在可得时从负债中扣除合同负债，削弱预收房款对「净债务」代理的高估。"
         )
+    elif sector_kind is DcfSectorKind.CYCLICAL:
+        notes.append(
+            "强周期行业：单期财报现金流对永续增长外推可靠性弱；默认已采用较保守的阶段与永续增长假设，"
+            "仍须结合商品价格、产能利用率与行业景气自行校验。"
+        )
+    if is_dcf_borderline_industry(industry):
+        warnings.append(
+            "该行业处于周期/消费等划分边界清单：估值假设争议较大，请与同业及多情景交叉验证。"
+        )
+
+    income_list = income_rows or []
+    inf_raw: float | None = None
+    inf_src: str | None = None
+    inf_w: list[str] = []
+    if stage1_override is None:
+        inf_raw, inf_src, inf_w = infer_stage1_growth_from_annual_statements(
+            sector_kind=sector_kind,
+            income_rows=income_list,
+            cashflow_rows=cashflow_rows,
+            settings=settings,
+        )
+        warnings.extend(inf_w)
+
+    if stage1_override is not None:
+        stage1_growth_source = "query_override"
+    elif inf_raw is not None:
+        stage1_growth_source = str(inf_src or "inferred")
+    elif sector_kind is DcfSectorKind.CYCLICAL:
+        stage1_growth_source = "default_cyclical"
+    else:
+        stage1_growth_source = "default_sector"
+
+    _assumption_head: dict[str, Any] = {
+        "dcf_model_revision": DCF_MODEL_REVISION,
+        "dcf_sector_kind": sector_kind.value,
+        "stage1_growth_source": stage1_growth_source,
+        **industry_fields,
+    }
 
     resolved = resolve_effective_dcf_params(
         settings,
+        sector_kind=sector_kind,
         wacc_override=wacc_override,
         stage1_override=stage1_override,
         terminal_override=terminal_override,
+        stage1_inferred_raw=inf_raw if stage1_override is None else None,
     )
     if isinstance(resolved, str):
         return {
@@ -97,13 +160,11 @@ def build_company_dcf_payload(
             "message": resolved,
             "warnings": warnings,
             "notes": notes,
-            "assumptions": None,
+            "assumptions": dict(_assumption_head),
             "values": None,
         }
 
     wacc, g1, gt, years, eps = resolved
-
-    income_list = income_rows or []
     ocf_ttm: float | None
     capex_proxy: float | None
     fcf_base: float | None
@@ -163,7 +224,7 @@ def build_company_dcf_payload(
             "message": "无法从现金流量表或利润表汇总基期现金流",
             "warnings": warnings,
             "notes": notes,
-            "assumptions": None,
+            "assumptions": dict(_assumption_head),
             "values": None,
         }
 
@@ -174,7 +235,7 @@ def build_company_dcf_payload(
             "message": "无法从资产负债表估算净债务",
             "warnings": warnings,
             "notes": notes,
-            "assumptions": None,
+            "assumptions": dict(_assumption_head),
             "values": None,
         }
 
@@ -200,7 +261,7 @@ def build_company_dcf_payload(
             "message": f"无法获取总股本：{exc}",
             "warnings": warnings,
             "notes": notes,
-            "assumptions": None,
+            "assumptions": dict(_assumption_head),
             "values": None,
         }
 
@@ -216,6 +277,7 @@ def build_company_dcf_payload(
     )
     out = compute_dcf(inp)
     assumptions = {
+        "dcf_model_revision": DCF_MODEL_REVISION,
         "wacc": wacc,
         "stage1_growth": g1,
         "terminal_growth": gt,
@@ -237,6 +299,8 @@ def build_company_dcf_payload(
         "financial_ni_base_scale": round(financial_ni_scale_applied, 4)
         if financial_ni_scale_applied is not None
         else None,
+        "stage1_growth_source": stage1_growth_source,
+        **industry_fields,
     }
 
     if isinstance(out, DcfSkipped):

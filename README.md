@@ -61,6 +61,7 @@ pip install -e ".[a-share]"
   - `VALUE_SCREENER_DCF_TTM_PERIODS`：现金流量表用于滚动加总的最多期数（默认 4）。
   - `VALUE_SCREENER_DCF_WACC_MIN` / `_MAX`、`_STAGE1_G_*`、`_TERMINAL_G_*`：API 查询参数覆盖时的钳制边界。
   - `VALUE_SCREENER_DCF_DAILY_BASIC_TIMEOUT_SECONDS`：拉取 `daily_basic` 股本超时秒数。
+  - **分行业口径与回归说明**（算法规格、`dcf_model_revision`、黄金测试索引）：[`docs/dcf-sector-algorithms.md`](docs/dcf-sector-algorithms.md)。
 
 ## Docker（MySQL + Redis）
 
@@ -143,14 +144,14 @@ python -m value_screener.cli sync-reference
 
 表 `fs_income`、`fs_balance`、`fs_cashflow`：每行一条报告期（`end_date`，YYYYMMDD），唯一键 `(ts_code, end_date)`。除常用数值列外，`payload` 存 TuShare 接口返回的**整行 JSON**（字段以 TuShare `income` / `balancesheet` / `cashflow` 为准，接口升级时可不迁库仍能读全量）。
 
-**报告频率（年报 / 半年报 / 季报）**：同步时 **不按** `report_type` 或 `end_date` 的月日后缀丢弃数据。只要 `end_date` 落在 `--since-years` 决定的闭区间 `[start, end]` 内（字符串 YYYYMMDD 比较），TuShare 返回的季报末（如 `0331`、`0630`、`0930`、`1231`）、半年报、年报行 **一律 upsert**。同一 `end_date` 在不同表各一行；`report_type`、`comp_type` 等元数据写入列并存在于 `payload` 中，便于下游区分合并口径。
+**报告频率（年报 / 半年报 / 季报）**：同步时 **不按** `report_type` 或 `end_date` 的月日后缀丢弃数据。只要 `end_date` 落在 `--since-years` 决定的闭区间 `[start, end]` 内（字符串 YYYYMMDD 比较；CLI 默认近 **5** 个日历年），TuShare 返回的季报末（如 `0331`、`0630`、`0930`、`1231`）、半年报、年报行 **一律 upsert**。同一 `end_date` 在不同表各一行；`report_type`、`comp_type` 等元数据写入列并存在于 `payload` 中，便于下游区分合并口径。
 
 与 `financial_snapshot` 的区别：`financial_snapshot` 是批跑用的**时点 TTM 近似快照**（短 TTL 复用）；三张 `fs_*` 表是**按报告期存历史**，供后续深度分析或自建指标，二者互补。
 
 CLI（需已 `alembic upgrade` 到含 `009_ingestion_job` 的版本）：
 
 ```powershell
-python -m value_screener.cli sync-financial-statements --max-symbols 10 --since-years 3
+python -m value_screener.cli sync-financial-statements --max-symbols 10
 ```
 
 - 标的列表优先读 `security_reference` 中 `list_status=L`；若表为空则临时调 TuShare `stock_basic`（该请求也计入分钟限流）。

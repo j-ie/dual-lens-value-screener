@@ -9,6 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+# 与 `build_company_dcf_payload` 写入的 `assumptions.dcf_model_revision` 一致；口径变更时请递增。
+DCF_MODEL_REVISION = "2026.04-dcf-v1"
+
 
 @dataclass(frozen=True, slots=True)
 class DcfInputs:
