@@ -269,7 +269,7 @@ export default function DataTasksPage() {
 
   const columns: ColumnsType<RunItem> = useMemo(
     () => [
-      { title: "ID", dataIndex: "id", width: 72, fixed: "left" },
+      { title: "ID", dataIndex: "id", width: 72, fixed: "left", align: "right" },
       {
         title: "状态",
         dataIndex: "status",
@@ -299,6 +299,7 @@ export default function DataTasksPage() {
         title: "规模 / 成功 / 失败",
         key: "counts",
         width: 160,
+        align: "right",
         render: (_: unknown, r) =>
           `${r.universe_size ?? "—"} / ${r.snapshot_ok ?? "—"} / ${r.snapshot_failed ?? "—"}`,
       },
@@ -360,9 +361,8 @@ export default function DataTasksPage() {
                   size="small"
                   type="link"
                   loading={postPipeId === r.id}
-                  disabled={isPostPipelineBusy(r)}
                 >
-                  后置任务
+                  {isPostPipelineBusy(r) ? "重新后置任务" : "后置任务"}
                 </Button>
               </Popconfirm>
             ) : null}

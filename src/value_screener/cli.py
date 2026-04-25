@@ -10,8 +10,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from value_screener.application.backtest_engine import DefaultBacktestExecutor, SampleBacktestExecutor
+from value_screener.application.backtest_service import BacktestApplicationService
 from value_screener.application.batch_screening_service import BatchScreeningApplicationService
 from value_screener.application.screening_service import ScreeningApplicationService
+from value_screener.domain.backtest import BacktestConfig
 from value_screener.infrastructure.app_db import get_engine
 from value_screener.infrastructure.factory import build_composite_provider
 from value_screener.infrastructure.settings import AShareIngestionSettings
@@ -94,6 +97,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     attach_tl.add_argument("--run-id", type=int, required=True, dest="run_id", help="screening_run.id")
 
+    backtest = sub.add_parser("backtest", help="创建并执行分数策略回测任务")
+    backtest.add_argument("--strategy-name", type=str, default="investment_quality_score")
+    backtest.add_argument("--start-date", type=str, required=True, help="YYYY-MM-DD")
+    backtest.add_argument("--end-date", type=str, required=True, help="YYYY-MM-DD")
+    backtest.add_argument(
+        "--rebalance-frequency",
+        type=str,
+        default="monthly",
+        choices=("weekly", "monthly", "quarterly"),
+    )
+    backtest.add_argument("--holding-period-days", type=int, default=20)
+    backtest.add_argument("--top-n", type=int, default=None)
+    backtest.add_argument("--top-quantile", type=float, default=0.2)
+    backtest.add_argument("--benchmark", type=str, default="000300.SH")
+    backtest.add_argument("--transaction-cost-bps", type=int, default=15)
+    backtest.add_argument(
+        "--symbols-file",
+        type=Path,
+        default=None,
+        help="每行一个 ts_code，作为回测股票池过滤条件",
+    )
+    backtest.add_argument(
+        "--sample-mode",
+        action="store_true",
+        help="使用固定验收样例执行，不依赖数据库历史快照",
+    )
+    backtest.add_argument(
+        "--run-now",
+        action="store_true",
+        help="创建任务后立即同步执行",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "batch-screen":
         return _run_batch_screen(args)
@@ -103,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_sync_financial_statements(args)
     if args.command == "attach-third-lens":
         return _run_attach_third_lens(args)
+    if args.command == "backtest":
+        return _run_backtest(args)
     return 1
 
 
@@ -216,6 +253,12 @@ def _run_sync_financial_statements(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001
         logging.error("数据库不可用: %s", exc)
         return 1
+    force_new_sync_job = True
+    if args.reset_job:
+        logging.info("已显式指定 --reset-job，本次财报同步将强制创建新任务并从头开始")
+    elif args.no_resume:
+        logging.info("已显式指定 --no-resume，本次财报同步仍按触发即新任务语义从头开始")
+
     try:
         meta = sync_financial_statements_to_mysql(
             engine,
@@ -224,8 +267,8 @@ def _run_sync_financial_statements(args: argparse.Namespace) -> int:
             max_symbols=args.max_symbols,
             since_years=args.since_years,
             scheduled_date=sched,
-            resume=not args.no_resume,
-            reset_job=args.reset_job,
+            resume=False if force_new_sync_job else (not args.no_resume),
+            reset_job=True if force_new_sync_job else args.reset_job,
         )
     except Exception as exc:  # noqa: BLE001
         logging.exception("财报同步失败: %s", exc)
@@ -264,6 +307,58 @@ def _run_attach_third_lens(args: argparse.Namespace) -> int:
         logging.exception("attach-third-lens 失败: %s", exc)
         return 1
     logging.info("第三套分已写入 run_id=%s updated=%s", meta.get("run_id"), meta.get("updated"))
+    return 0
+
+
+def _run_backtest(args: argparse.Namespace) -> int:
+    import datetime as _dt
+
+    try:
+        _dt.datetime.strptime(args.start_date, "%Y-%m-%d")
+        _dt.datetime.strptime(args.end_date, "%Y-%m-%d")
+    except ValueError:
+        logging.error("--start-date/--end-date 须为 YYYY-MM-DD")
+        return 1
+    symbols: list[str] = []
+    if args.symbols_file is not None:
+        raw = args.symbols_file.read_text(encoding="utf-8")
+        symbols = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    try:
+        engine = get_engine()
+    except Exception as exc:  # noqa: BLE001
+        logging.error("数据库不可用: %s", exc)
+        return 1
+    svc = BacktestApplicationService(engine)
+    cfg = BacktestConfig(
+        strategy_name=args.strategy_name,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        rebalance_frequency=args.rebalance_frequency,
+        holding_period_days=args.holding_period_days,
+        top_n=args.top_n,
+        top_quantile=args.top_quantile,
+        benchmark=args.benchmark,
+        transaction_cost_bps=args.transaction_cost_bps,
+        filters={"symbols": symbols} if symbols else {},
+        extras={},
+    )
+    job = svc.create_job(cfg)
+    logging.info("backtest job created id=%s uuid=%s status=%s", job.id, job.external_uuid, job.status.value)
+    if not args.run_now:
+        return 0
+    executor = SampleBacktestExecutor() if args.sample_mode else DefaultBacktestExecutor(engine)
+    try:
+        result = svc.execute_job(job.id, executor)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("backtest execute failed: %s", exc)
+        return 1
+    logging.info(
+        "backtest done id=%s annualized=%.4f sharpe=%.4f mdd=%.4f",
+        job.id,
+        float(result.metrics.get("annualized_return") or 0.0),
+        float(result.metrics.get("sharpe") or 0.0),
+        float(result.metrics.get("max_drawdown") or 0.0),
+    )
     return 0
 
 

@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AiHistoryPage from "./AiHistoryPage";
+import BacktestWorkbenchPage from "./BacktestWorkbenchPage";
 import { AppShell } from "./components/AppShell";
 import CompanyDetailPage from "./CompanyDetailPage";
 import DataTasksPage from "./DataTasksPage";
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="/investment-quality" element={<Navigate to="/data-tasks" replace />} />
           <Route path="/investment-quality-report" element={<Navigate to="/data-tasks" replace />} />
           <Route path="/data-tasks" element={<DataTasksPage />} />
+          <Route path="/backtests" element={<BacktestWorkbenchPage />} />
           <Route path="/ai-history" element={<AiHistoryPage />} />
           <Route path="/runs/:runId/companies/:tsCode" element={<CompanyDetailPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

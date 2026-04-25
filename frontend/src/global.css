@@ -1,13 +1,18 @@
-/* 全局：偏苹果产品页的留白、细分割、胶囊控件 */
+/* 全局：投研工作台 — 浅色高对比、细分割、壳层/工作台/阅读区分层 */
 :root {
   --vs-content-max: 1180px;
+  --vs-workbench-bg: #f4f5f7;
+  --vs-shell-bg: #ffffff;
   --vs-ink: #1d1d1f;
   --vs-ink-secondary: #6e6e73;
   --vs-ink-tertiary: #86868b;
   --vs-surface: #ffffff;
+  --vs-surface-muted: #f5f6f8;
   --vs-accent: #0066cc;
   --vs-line: rgba(0, 0, 0, 0.08);
-  --vs-line-faint: rgba(0, 0, 0, 0.05);
+  --vs-line-faint: rgba(0, 0, 0, 0.06);
+  --vs-reading-max: 720px;
+  --vs-reading-color: rgba(29, 29, 31, 0.82);
 }
 
 html {
@@ -19,10 +24,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--vs-ink);
-  background-color: #d1d5dc;
-  background-image:
-    radial-gradient(ellipse 100% 70% at 50% -25%, rgba(255, 255, 255, 0.95), transparent 55%),
-    linear-gradient(180deg, #c9ccd4 0%, #dfe1e6 45%, #ebecef 100%);
+  background-color: var(--vs-workbench-bg);
 }
 
 .vs-layout-root {
@@ -34,11 +36,9 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: saturate(200%) blur(24px);
-  -webkit-backdrop-filter: saturate(200%) blur(24px);
+  background: var(--vs-shell-bg);
   border-bottom: 1px solid var(--vs-line);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.75) inset;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
 }
 
 .vs-top-inner {
@@ -105,7 +105,12 @@ body {
 .vs-app-content {
   max-width: var(--vs-content-max);
   margin: 0 auto;
-  padding: 32px 24px 80px;
+  padding: 24px 24px 64px;
+}
+
+/* 工作台主内容：与壳层背景区分略弱，便于聚焦卡片与表格 */
+.vs-workspace {
+  min-height: calc(100vh - 120px);
 }
 
 .vs-surface-card.ant-card {
@@ -141,12 +146,12 @@ body {
   margin-bottom: 28px !important;
 }
 
-/* 筛选区：标签左、控件右，纵向疏朗 */
+/* 筛选区：标签与控件垂直居中对齐，便于扫读 */
 .vs-filter-stack {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  margin-bottom: 28px;
+  gap: 18px;
+  margin-bottom: 24px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--vs-line-faint);
 }
@@ -154,8 +159,8 @@ body {
 .vs-filter-row {
   display: grid;
   grid-template-columns: minmax(100px, 132px) 1fr;
-  gap: 12px 20px;
-  align-items: start;
+  gap: 10px 20px;
+  align-items: center;
 }
 
 @media (max-width: 720px) {
@@ -168,14 +173,13 @@ body {
   font-size: 13px;
   font-weight: 500;
   color: var(--vs-ink-secondary);
-  padding-top: 8px;
   letter-spacing: 0.01em;
 }
 
 .vs-filter-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 16px;
+  gap: 10px 14px;
   align-items: center;
 }
 
@@ -216,8 +220,9 @@ body {
 
 .vs-data-table.ant-table-wrapper .ant-table-tbody > tr > td {
   border-bottom: 1px solid var(--vs-line-faint) !important;
-  padding: 16px 12px !important;
+  padding: 14px 12px !important;
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
 .vs-data-table.ant-table-wrapper .ant-table-tbody > tr:last-child > td {
@@ -229,10 +234,27 @@ body {
 }
 
 .vs-reading {
-  max-width: 720px;
+  max-width: var(--vs-reading-max);
   line-height: 1.65;
   font-size: 15px;
-  color: rgba(0, 0, 0, 0.78);
+  color: var(--vs-reading-color);
+}
+
+.vs-reading .ai-narrative-md ul,
+.vs-reading .ai-narrative-md ol {
+  margin: 0.5em 0;
+  padding-left: 1.35em;
+}
+
+.vs-reading .ai-narrative-md li {
+  margin: 0.25em 0;
+}
+
+.vs-reading .ai-narrative-md code {
+  font-size: 0.92em;
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--vs-surface-muted);
 }
 
 .vs-reading .ai-narrative-md h1,
@@ -260,6 +282,6 @@ body {
   border: 1px solid var(--vs-line-faint);
   border-radius: 14px;
   padding: 16px 20px;
-  background: #fafafa;
+  background: var(--vs-surface-muted);
   margin-top: 12px;
 }

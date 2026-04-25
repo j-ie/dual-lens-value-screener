@@ -119,6 +119,39 @@ ingestion_job = Table(
     UniqueConstraint("job_type", "scheduled_date", "params_hash", name="uk_ingestion_job_key"),
 )
 
+backtest_job = Table(
+    "backtest_job",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("external_uuid", String(36), nullable=False, unique=True),
+    Column("strategy_name", String(64), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("config_json", JSON, nullable=False),
+    Column("meta_json", JSON, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+)
+
+backtest_result = Table(
+    "backtest_result",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "job_id",
+        BigInteger,
+        ForeignKey("backtest_job.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("summary_json", JSON, nullable=False),
+    Column("metrics_json", JSON, nullable=False),
+    Column("curve_json", JSON, nullable=True),
+    Column("diagnostics_json", JSON, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("job_id", name="uk_backtest_result_job"),
+)
+
 security_reference = Table(
     "security_reference",
     metadata,

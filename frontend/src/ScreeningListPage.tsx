@@ -474,12 +474,14 @@ export default function ScreeningListPage() {
         title: "市值（批跑时点）",
         dataIndex: "market_cap",
         width: 120,
+        align: "right",
         render: (_: number | null | undefined, row) => formatMarketCapYuan(row.market_cap),
       },
       {
         title: "股息率％",
         key: "dividend_yield",
         width: 100,
+        align: "right",
         render: (_: unknown, row) => formatDividendYieldPreferred(row.dv_ttm, row.dv_ratio),
       },
       {
@@ -498,18 +500,21 @@ export default function ScreeningListPage() {
         title: "巴菲特分（规则）",
         dataIndex: "buffett_score",
         width: 96,
+        align: "right",
         render: (v: number) => v.toFixed(2),
       },
       {
         title: "格雷厄姆分（规则）",
         dataIndex: "graham_score",
         width: 104,
+        align: "right",
         render: (v: number) => v.toFixed(2),
       },
       {
         title: "综合分（双维）",
         dataIndex: "combined_score",
         width: 108,
+        align: "right",
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
       },
@@ -517,6 +522,7 @@ export default function ScreeningListPage() {
         title: "第三套分",
         dataIndex: "third_lens_score",
         width: 96,
+        align: "right",
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
       },
@@ -524,6 +530,7 @@ export default function ScreeningListPage() {
         title: "三元综合",
         dataIndex: "final_triple_score",
         width: 96,
+        align: "right",
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
       },
@@ -531,6 +538,7 @@ export default function ScreeningListPage() {
         title: "AI 一致性分",
         dataIndex: "ai_score",
         width: 102,
+        align: "right",
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
       },
@@ -538,6 +546,7 @@ export default function ScreeningListPage() {
         title: "机会倾向分",
         dataIndex: "opportunity_score",
         width: 96,
+        align: "right",
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && !Number.isNaN(v) ? v.toFixed(2) : EMPTY,
       },

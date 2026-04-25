@@ -160,7 +160,13 @@ export default function InvestmentQualityPage() {
       { title: "代码", dataIndex: "symbol", width: 120 },
       { title: "名称", dataIndex: "display_name", width: 120, render: (v: string) => v || "—" },
       { title: "行业", dataIndex: "industry", width: 120, render: (v: string) => v || "—" },
-      { title: "总分", key: "score", width: 80, render: (_: unknown, r) => r.investment_quality.total_score },
+      {
+        title: "总分",
+        key: "score",
+        width: 80,
+        align: "right",
+        render: (_: unknown, r) => r.investment_quality.total_score,
+      },
       {
         title: "结论",
         key: "decision",
@@ -171,6 +177,7 @@ export default function InvestmentQualityPage() {
         title: "低估",
         key: "undervalued",
         width: 80,
+        align: "center",
         render: (_: unknown, r) => (r.investment_quality.is_undervalued ? "是" : "否"),
       },
       {
@@ -217,7 +224,7 @@ export default function InvestmentQualityPage() {
           </Button>
         </Space>
         {single && (
-          <div style={{ marginTop: 16 }}>
+          <div className="vs-reading" style={{ marginTop: 16 }}>
             <Typography.Text>结论：{single.investment_quality.decision_label_zh}</Typography.Text>
             <br />
             <Typography.Text>总分：{single.investment_quality.total_score}</Typography.Text>
@@ -252,6 +259,8 @@ export default function InvestmentQualityPage() {
           {runId !== null && statusTag(runs.find((x) => x.id === runId)?.status ?? "")}
         </Space>
         <Table<IqResultItem>
+          className="vs-data-table"
+          bordered={false}
           rowKey="symbol"
           loading={resultsLoading}
           columns={columns}

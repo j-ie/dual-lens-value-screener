@@ -440,21 +440,21 @@ export default function CompanyDetailPage() {
   const displayDcf = dcfResult ?? detail?.dcf ?? null;
   const incomeCols: ColumnsType<Record<string, unknown>> = [
     { title: "报告期", dataIndex: "end_date", width: 100 },
-    { title: "营收", dataIndex: "total_revenue", render: fmtNum },
-    { title: "归母净利", dataIndex: "n_income_attr_p", render: fmtNum },
-    { title: "基本 EPS", dataIndex: "basic_eps", render: fmtNum },
+    { title: "营收", dataIndex: "total_revenue", align: "right", render: fmtNum },
+    { title: "归母净利", dataIndex: "n_income_attr_p", align: "right", render: fmtNum },
+    { title: "基本 EPS", dataIndex: "basic_eps", align: "right", render: fmtNum },
   ];
   const balanceCols: ColumnsType<Record<string, unknown>> = [
     { title: "报告期", dataIndex: "end_date", width: 100 },
-    { title: "总资产", dataIndex: "total_assets", render: fmtNum },
-    { title: "总负债", dataIndex: "total_liab", render: fmtNum },
-    { title: "股东权益", dataIndex: "total_hldr_eqy_exc_min_int", render: fmtNum },
+    { title: "总资产", dataIndex: "total_assets", align: "right", render: fmtNum },
+    { title: "总负债", dataIndex: "total_liab", align: "right", render: fmtNum },
+    { title: "股东权益", dataIndex: "total_hldr_eqy_exc_min_int", align: "right", render: fmtNum },
   ];
   const cashCols: ColumnsType<Record<string, unknown>> = [
     { title: "报告期", dataIndex: "end_date", width: 100 },
-    { title: "经营现金流", dataIndex: "n_cashflow_act", render: fmtNum },
-    { title: "投资现金流", dataIndex: "n_cash_flows_inv_act", render: fmtNum },
-    { title: "筹资现金流", dataIndex: "n_cash_flows_fnc_act", render: fmtNum },
+    { title: "经营现金流", dataIndex: "n_cashflow_act", align: "right", render: fmtNum },
+    { title: "投资现金流", dataIndex: "n_cash_flows_inv_act", align: "right", render: fmtNum },
+    { title: "筹资现金流", dataIndex: "n_cash_flows_fnc_act", align: "right", render: fmtNum },
   ];
 
   return (
@@ -734,6 +734,8 @@ export default function CompanyDetailPage() {
               <IncomeComboChart income={detail.financials.income} />
             </Suspense>
             <Table
+              className="vs-data-table"
+              bordered={false}
               size="small"
               rowKey={(_, i) => `inc-${i}`}
               columns={incomeCols}
@@ -746,6 +748,8 @@ export default function CompanyDetailPage() {
               资产负债表（摘要）
             </Typography.Title>
             <Table
+              className="vs-data-table"
+              bordered={false}
               size="small"
               rowKey={(_, i) => `bal-${i}`}
               columns={balanceCols}
@@ -758,6 +762,8 @@ export default function CompanyDetailPage() {
               现金流量表（摘要）
             </Typography.Title>
             <Table
+              className="vs-data-table"
+              bordered={false}
               size="small"
               rowKey={(_, i) => `cf-${i}`}
               columns={cashCols}

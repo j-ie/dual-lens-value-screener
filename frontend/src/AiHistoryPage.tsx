@@ -264,12 +264,14 @@ export default function AiHistoryPage() {
         title: "一致性分",
         dataIndex: "ai_score",
         width: 88,
+        align: "right",
         render: (v: number) => (Number.isFinite(v) ? v.toFixed(2) : EMPTY),
       },
       {
         title: "机会倾向",
         dataIndex: "opportunity_score",
         width: 88,
+        align: "right",
         render: (v: number | null | undefined) =>
           v !== null && v !== undefined && Number.isFinite(v) ? v.toFixed(2) : EMPTY,
       },

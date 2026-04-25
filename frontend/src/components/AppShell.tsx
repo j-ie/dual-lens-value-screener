@@ -6,9 +6,12 @@ const { Content } = Layout;
 
 function mainSegmentFromPath(
   pathname: string,
-): "screening" | "ai-history" | "data-tasks" {
+): "screening" | "ai-history" | "data-tasks" | "backtests" {
   if (pathname.startsWith("/investment-quality-report") || pathname.startsWith("/investment-quality")) {
     return "data-tasks";
+  }
+  if (pathname.startsWith("/backtests")) {
+    return "backtests";
   }
   if (pathname.startsWith("/ai-history")) {
     return "ai-history";
@@ -47,6 +50,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   navigate("/");
                 } else if (key === "data-tasks") {
                   navigate("/data-tasks");
+                } else if (key === "backtests") {
+                  navigate("/backtests");
                 } else {
                   navigate("/ai-history");
                 }
@@ -54,6 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               options={[
                 { label: "筛选结果", value: "screening" },
                 { label: "拉数任务", value: "data-tasks" },
+                { label: "回测工作台", value: "backtests" },
                 { label: "AI 分析历史", value: "ai-history" },
               ]}
             />
@@ -61,7 +67,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <Content className="vs-layout-content">
-        <div className="vs-app-content">{children}</div>
+        <div className="vs-app-content">
+          <div className="vs-workspace">{children}</div>
+        </div>
       </Content>
     </Layout>
   );

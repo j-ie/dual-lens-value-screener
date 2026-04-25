@@ -74,33 +74,33 @@ export function AiAnalysisSections({ data, dcfExtra }: Props) {
 
       {dcfExtra}
 
-      {data.investment_quality_commentary ? (
-        <>
-          <div className="vs-section-title">价值判断（规则引擎 · 模型解读）</div>
-          <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 16 }}>
-            {data.investment_quality_commentary}
-          </Typography.Paragraph>
-        </>
-      ) : null}
-
-      <div className="vs-section-title">摘要</div>
-      <Typography.Paragraph style={{ marginBottom: 0 }}>{data.summary}</Typography.Paragraph>
-
-      <div className="vs-section-title">关键指标与业务</div>
-      <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
-        {data.key_metrics_commentary}
-      </Typography.Paragraph>
-
-      <div className="vs-section-title">风险与不确定性</div>
-      <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>{data.risks}</Typography.Paragraph>
-
-      <div className="vs-section-title">与规则筛分及 DCF 的对照</div>
-      <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
-        {data.alignment_with_scores}
-      </Typography.Paragraph>
-
-      <div className="vs-section-title">完整叙述</div>
       <div className="vs-reading">
+        {data.investment_quality_commentary ? (
+          <>
+            <div className="vs-section-title">价值判断（规则引擎 · 模型解读）</div>
+            <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 16 }}>
+              {data.investment_quality_commentary}
+            </Typography.Paragraph>
+          </>
+        ) : null}
+
+        <div className="vs-section-title">摘要</div>
+        <Typography.Paragraph style={{ marginBottom: 0 }}>{data.summary}</Typography.Paragraph>
+
+        <div className="vs-section-title">关键指标与业务</div>
+        <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
+          {data.key_metrics_commentary}
+        </Typography.Paragraph>
+
+        <div className="vs-section-title">风险与不确定性</div>
+        <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>{data.risks}</Typography.Paragraph>
+
+        <div className="vs-section-title">与规则筛分及 DCF 的对照</div>
+        <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }}>
+          {data.alignment_with_scores}
+        </Typography.Paragraph>
+
+        <div className="vs-section-title">完整叙述</div>
         <div className="ai-narrative-md">
           <ReactMarkdown>{data.narrative_markdown}</ReactMarkdown>
         </div>

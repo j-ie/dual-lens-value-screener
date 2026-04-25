@@ -574,7 +574,7 @@ def trigger_post_pipeline(
 ) -> PostPipelineAcceptedResponse:
     """
     手动触发后置流水线：刷新第三套/三元综合分，对综合分 Top N（环境变量）逐只算 DCF 并调用 AI 落库。
-    仅允许 status=success；若已有流水线在执行中则 409。
+    仅允许 status=success；每次触发均重新排队一次后置流水线。
     """
 
     try:
@@ -593,17 +593,18 @@ def trigger_post_pipeline(
             detail="仅能在批跑成功（status=success）后触发后置流水线",
         )
     meta = row.meta_json or {}
-    if is_post_pipeline_busy(meta):
-        raise HTTPException(
-            status_code=409,
-            detail="该 Run 的后置流水线正在执行中，请稍后在列表中查看进度",
-        )
-
+    busy_now = is_post_pipeline_busy(meta)
     background_tasks.add_task(run_post_full_batch_pipeline_background, run_id)
+    msg = "已排队后置任务（第三套/三元、Top N DCF+AI），请轮询本 Run 的 post_pipeline_* 字段"
+    if busy_now:
+        msg = (
+            "检测到该 Run 仍处于后置执行态，已按你的触发请求重新排队新的后置任务；"
+            "请留意进度字段可能被并行任务交替刷新。"
+        )
     return PostPipelineAcceptedResponse(
         run_id=run_id,
         status="accepted",
-        message="已排队后置任务（第三套/三元、Top N DCF+AI），请轮询本 Run 的 post_pipeline_* 字段",
+        message=msg,
     )
 
 

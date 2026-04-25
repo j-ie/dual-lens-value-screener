@@ -188,12 +188,14 @@ export default function InvestmentQualityReportPage() {
         title: "总分",
         key: "score",
         width: 80,
+        align: "right",
         render: (_: unknown, r) => r.investment_quality.total_score,
       },
       {
         title: "低估",
         key: "undervalued",
         width: 80,
+        align: "center",
         render: (_: unknown, r) => (r.investment_quality.is_undervalued ? "是" : "否"),
       },
     ],
@@ -205,41 +207,43 @@ export default function InvestmentQualityReportPage() {
       {!summary ? (
         <Typography.Text type="secondary">暂无总结，请先生成。</Typography.Text>
       ) : (
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            message={summary.conclusion}
-            description={
-              <div>
-                置信度：{confidenceTag(summary.confidence)}，仓位建议：{summary.position_advice}
-              </div>
-            }
-          />
-          <Typography.Text>
-            <b>估值判断：</b>
-            {summary.valuation_view}
-          </Typography.Text>
-          <Typography.Text>
-            <b>买入触发：</b>理想 {summary.buy_trigger_zone.ideal}；可接受 {summary.buy_trigger_zone.acceptable}
-          </Typography.Text>
-          <Typography.Text>
-            <b>退出条件：</b>
-            {summary.exit_conditions.join("；")}
-          </Typography.Text>
-          <Typography.Text>
-            <b>反方观点：</b>
-            {summary.counter_arguments.join("；")}
-          </Typography.Text>
-          <Typography.Text>
-            <b>事实依据：</b>
-            {summary.facts.join("；")}
-          </Typography.Text>
-          <Typography.Text>
-            <b>判断结论：</b>
-            {summary.judgments.join("；")}
-          </Typography.Text>
-          <Typography.Text type="secondary">{summary.disclaimer}</Typography.Text>
-        </Space>
+        <div className="vs-reading">
+          <Space direction="vertical" style={{ width: "100%" }} size="middle">
+            <Alert
+              type="info"
+              message={summary.conclusion}
+              description={
+                <div>
+                  置信度：{confidenceTag(summary.confidence)}，仓位建议：{summary.position_advice}
+                </div>
+              }
+            />
+            <Typography.Text>
+              <b>估值判断：</b>
+              {summary.valuation_view}
+            </Typography.Text>
+            <Typography.Text>
+              <b>买入触发：</b>理想 {summary.buy_trigger_zone.ideal}；可接受 {summary.buy_trigger_zone.acceptable}
+            </Typography.Text>
+            <Typography.Text>
+              <b>退出条件：</b>
+              {summary.exit_conditions.join("；")}
+            </Typography.Text>
+            <Typography.Text>
+              <b>反方观点：</b>
+              {summary.counter_arguments.join("；")}
+            </Typography.Text>
+            <Typography.Text>
+              <b>事实依据：</b>
+              {summary.facts.join("；")}
+            </Typography.Text>
+            <Typography.Text>
+              <b>判断结论：</b>
+              {summary.judgments.join("；")}
+            </Typography.Text>
+            <Typography.Text type="secondary">{summary.disclaimer}</Typography.Text>
+          </Space>
+        </div>
       )}
     </Card>
   );
@@ -297,6 +301,8 @@ export default function InvestmentQualityReportPage() {
           </Button>
         </Space>
         <Table<IqResultItem>
+          className="vs-data-table"
+          bordered={false}
           rowKey="symbol"
           dataSource={results?.items ?? []}
           loading={loadingResults}

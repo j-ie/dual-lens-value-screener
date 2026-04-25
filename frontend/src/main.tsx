@@ -12,11 +12,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       theme={{
         token: {
           colorPrimary: "#0066cc",
-          colorBgLayout: "transparent",
+          colorBgLayout: "#f4f5f7",
           colorBgContainer: "#ffffff",
           colorText: "#1d1d1f",
           colorTextSecondary: "#6e6e73",
-          borderRadius: 12,
+          borderRadius: 10,
           colorBorderSecondary: "rgba(0,0,0,0.08)",
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Noto Sans SC", "Noto Sans", sans-serif',
@@ -25,7 +25,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         },
         components: {
           Layout: {
-            bodyBg: "transparent",
+            bodyBg: "#f4f5f7",
             headerBg: "transparent",
             footerBg: "transparent",
           },
@@ -35,7 +35,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             rowHoverBg: "rgba(0,0,0,0.03)",
             borderColor: "transparent",
             headerSplitColor: "transparent",
-            cellPaddingBlock: 16,
+            cellPaddingBlock: 14,
             cellPaddingInline: 12,
           },
           Card: {

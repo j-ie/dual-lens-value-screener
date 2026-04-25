@@ -130,8 +130,8 @@ def sync_financial_statements_to_mysql(
     max_symbols: int | None = None,
     since_years: int = 5,
     scheduled_date: date | None = None,
-    resume: bool = True,
-    reset_job: bool = False,
+    resume: bool = False,
+    reset_job: bool = True,
 ) -> dict[str, Any]:
     """
     按 TuShare 三表接口拉取近 since_years 年财报，写入 fs_income / fs_balance / fs_cashflow。
@@ -140,6 +140,9 @@ def sync_financial_statements_to_mysql(
 
     if not token or not token.strip():
         raise ValueError("TUSHARE_TOKEN 不能为空")
+    # 默认语义：每次触发都创建新任务并从头同步，避免复用旧游标造成“看起来没重跑”。
+    if reset_job:
+        resume = False
     start, end = statement_api_date_bounds(since_years=since_years)
     sched = scheduled_date or default_scheduled_date(tz_name=settings.fs_sync_schedule_tz)
     params_hash = financial_statement_job_params_hash(
@@ -192,6 +195,7 @@ def sync_financial_statements_to_mysql(
             "ingestion_job_id": job_row.id,
         }
 
+    restarted_from_completed = False
     if (
         resume
         and not reset_job
@@ -199,24 +203,27 @@ def sync_financial_statements_to_mysql(
         and job_row.cursor_ts_code is None
     ):
         logger.info(
-            "财报同步跳过：任务已完成 job_type=%s scheduled_date=%s params_hash=%s",
+            "财报同步检测到同参数任务已完成，自动重建任务并重新拉取最新窗口数据 "
+            "job_type=%s scheduled_date=%s params_hash=%s",
             job_type,
             sched.isoformat(),
             params_hash,
         )
-        return {
-            "universe": total,
-            "since_years": since_years,
-            "api_start": start,
-            "api_end": end,
-            "ok": 0,
-            "failures": [],
-            "workers": 1,
-            "skipped_completed": True,
-            "scheduled_date": sched.isoformat(),
-            "params_hash": params_hash,
-            "ingestion_job_id": job_row.id,
-        }
+        with engine.begin() as conn:
+            job_repo.delete_job(
+                conn,
+                job_type=job_type,
+                scheduled_date=sched,
+                params_hash=params_hash,
+            )
+            job_row = job_repo.ensure_job(
+                conn,
+                job_type=job_type,
+                scheduled_date=sched,
+                params_hash=params_hash,
+                universe_fingerprint_value=ufp,
+            )
+        restarted_from_completed = True
 
     if (
         job_row.universe_fingerprint
@@ -294,4 +301,5 @@ def sync_financial_statements_to_mysql(
         "params_hash": params_hash,
         "ingestion_job_id": job_id,
         "resumed_from_index": idx_start,
+        "restarted_from_completed": restarted_from_completed,
     }
